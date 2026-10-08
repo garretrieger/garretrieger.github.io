@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="Templates/slides.css">
   <script src="Templates/b6plus.js"></script>
  </head>
- <body class="shower fade-in duration=50 warn=5 hidemouse textfit">
+ <body class="shower fade-in duration=50 warn=5 hidemouse">
 
   <section class="comment">
    <p>Slides for the <strong>Incremental Font Transfer (IFT) Encoder Deep Dive</strong> presentation at <a href="https://www.w3.org/events/tpac/2026/tpac-2026/">W3C TPAC 2026</a>.</p>
@@ -28,55 +28,26 @@
   </section>
 
   <section class="comment">
-   <p>Welcome everyone. Today we're doing a comprehensive technical deep dive into the W3C Incremental Font Transfer (IFT) reference encoder (<code>w3c/ift-encoder</code>)—covering how we go from an arbitrary OpenType font to an optimized set of glyph-keyed and table-keyed patches that preserve shaping closure while minimizing expected bytes transferred.</p>
+   <p>Welcome everyone. Today we're doing a technical deep dive into the W3C Incremental Font Transfer (IFT) reference encoder (<code>w3c/ift-encoder</code>)—covering how we go from an arbitrary OpenType font to an optimized set of glyph-keyed and table-keyed patches that preserve shaping closure while minimizing expected bytes transferred.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 2: AGENDA & TALK OVERVIEW
   ===================================================================== -->
   <section class="slide" id="agenda">
-   <h2>Deep Dive Roadmap</h2>
-   <div class="columns">
-    <section>
-     <h3>1. Producing IFT Fonts &amp; Pipeline</h3>
-     <ul>
-      <li>IFT encoding model recap (<code>.ift_gk</code> vs. <code>.ift_tk</code>)</li>
-      <li>Single-step <code>font2ift</code> vs. 3-stage advanced workflow</li>
-     </ul>
-     <h3>2. Automatic Configuration</h3>
-     <ul>
-      <li>Script detection &amp; unigram overlap clustering</li>
-      <li>Quality Levels (1–7) &amp; Auto Quality Heuristic</li>
-     </ul>
-     <h3>3. Dependency Graph &amp; Conditions</h3>
-     <ul>
-      <li>Closure Requirement &amp; <code>DependencyGraph</code> nodes/edges</li>
-      <li>Phased Tarjan SCC condition extraction &amp; CNF normalization</li>
-     </ul>
-    </section>
-    <section>
-     <h3>4. Cost-Based Merging &amp; Multi-Script</h3>
-     <ul>
-      <li>Expected-byte cost function &amp; local &Delta;cost evaluation</li>
-      <li>Unigrams vs. Bigram probability bounds (Dawson–Sankoff)</li>
-      <li>Multi-script merge groups, <var>P</var><sub>agg</sub> factoring &amp; primary script splitting</li>
-      <li>Segment vs. Patch merges &amp; minimum group size enforcement</li>
-     </ul>
-     <h3>5. Key Optimizations &amp; Validation</h3>
-     <ul>
-      <li>Best-case pruning, low-impact cutoffs, inert segments &amp; caching</li>
-      <li>Closure requirement verification</li>
-     </ul>
-     <h3>6. The IFT Compiler</h3>
-     <ul>
-      <li>Table-keyed patch graph parameters &amp; OpenType table handling</li>
-     </ul>
-    </section>
-   </div>
+   <h2>Agenda</h2>
+   <ol class="compact">
+    <li><strong>Pipeline &amp; Workflows:</strong> Auto config, segmenter, compiler</li>
+    <li><strong>Automatic Configuration:</strong> Script clustering, quality levels (1–7)</li>
+    <li><strong>Dependency Graph &amp; Conditions:</strong> Closure, Tarjan SCC, CNF</li>
+    <li><strong>Cost-Based Merging:</strong> Expected bytes, bigram bounds, multi-script <var>P</var><sub>agg</sub></li>
+    <li><strong>Key Optimizations:</strong> Best-case pruning, cutoffs, inert segments, caching</li>
+    <li><strong>The IFT Compiler:</strong> Table-keyed patch DAG, prefetch lists, OpenType rules</li>
+   </ol>
   </section>
 
   <section class="comment">
-   <p>Here is our roadmap for the next 45–60 minutes. We'll start with a high-level look at the end-to-end pipeline and CLI tools, then dive into each major subsystem: automatic configuration, the Unicode and glyph dependency graph, condition extraction, the cost-based merger, the algorithmic optimizations that keep O(<var>n</var><sup>2</sup>) Brotli compression tractable, and finally the compiler that builds the patch graph and binary artifacts.</p>
+   <p>Here is our roadmap. We'll start with the three-stage encoding pipeline and CLI workflows, then cover automatic configuration, the Unicode and glyph dependency graph, condition extraction, cost-based merging, our core performance optimizations, and finally the IFT compiler.</p>
   </section>
 
   <!-- ====================================================================
@@ -84,87 +55,75 @@
   ===================================================================== -->
   <section class="slide two-panes" id="ift-recap">
    <div>
-    <h2>IFT Encoding Model Recap</h2>
-    <p>An IFT-encoded font starts with a compact <strong>Initial Font</strong> (WOFF2) containing baseline coverage and patch mapping tables (<code>IFT </code> / <code>IFTX</code>).</p>
-    <p>Clients dynamically extend the font by fetching two distinct types of patches:</p>
-    <ul>
-     <li><strong>Outline Data:</strong> <code>glyf</code>, <code>loca</code>, <code>gvar</code>, <code>CFF</code>, <code>CFF2</code></li>
-     <li><strong>Non-Outline Data:</strong> <code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, <code>COLR</code>, metrics, etc.</li>
+    <h2>IFT Encoding Model</h2>
+    <p>Compact <strong>Initial Font</strong> (WOFF2) with patch maps (<code>IFT </code> / <code>IFTX</code>).</p>
+    <ul class="compact">
+     <li><strong>Outlines:</strong> <code>glyf</code>, <code>loca</code>, <code>gvar</code>, <code>CFF</code>, <code>CFF2</code></li>
+     <li><strong>Non-Outlines:</strong> <code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, <code>COLR</code></li>
     </ul>
    </div>
    <div>
-    <h3>Two Complementary Patch Types</h3>
-    <ul>
-     <li><strong>Glyph-Keyed Patches (<code>.ift_gk</code>)</strong>
-      <br>Extend <em>outline tables</em>. Keyed by glyph IDs; independent and additive—any combination can be applied in any order in a single round trip.</li>
-     <li><strong>Table-Keyed Patches (<code>.ift_tk</code>)</strong>
-      <br>Extend <em>non-outline tables</em> via per-table Brotli shared-dictionary binary diffs. Invalidating—each patch transitions the font from a specific base state to a new extended state in a directed graph.</li>
-     <li><strong>Mixed Mode (Encoder Default)</strong>
-      <br>Combines both: table-keyed patches coarse-grain non-outline tables (e.g., per script), while glyph-keyed patches fine-grain outline data.</li>
+    <h3>Two Patch Types</h3>
+    <ul class="compact">
+     <li><strong>Glyph-Keyed (<code>.ift_gk</code>):</strong> Additive per-glyph outline bundles.</li>
+     <li><strong>Table-Keyed (<code>.ift_tk</code>):</strong> Brotli binary diffs over non-outline tables (DAG).</li>
+     <li><strong>Mixed Mode:</strong> Coarse <code>.ift_tk</code> + fine <code>.ift_gk</code>.</li>
     </ul>
    </div>
   </section>
 
   <section class="comment">
-   <p>Before diving into the encoder internals, let's briefly recap what the encoder produces. An IFT encoding splits font data into outline tables and non-outline tables. Outline tables are extended via Glyph-Keyed patches, which are additive per-glyph bundles. Non-outline tables are extended via Table-Keyed patches, which are binary diffs relative to a specific base font state. The encoder operates in Mixed Mode by default, combining coarse table-keyed patches with fine-grained glyph-keyed patches.</p>
+   <p>An IFT encoding splits font data into outline tables and non-outline tables. Outline tables are extended via Glyph-Keyed patches, which are additive per-glyph bundles. Non-outline tables are extended via Table-Keyed patches, which are binary diffs relative to a specific base font state. The encoder operates in Mixed Mode by default.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 4: THREE-STAGE PIPELINE ARCHITECTURE
   ===================================================================== -->
   <section class="slide" id="pipeline-overview">
-   <h2>Overview: Three-Stage Encoding Pipeline</h2>
+   <h2>Three-Stage Encoding Pipeline</h2>
    <figure>
-    <svg style="text-shadow: none" viewBox="0 0 880 185" width="840" height="175" role="img" aria-label="Three-stage IFT encoding pipeline diagram">
+    <svg style="text-shadow: none" viewBox="0 0 880 175" width="840" height="165" role="img" aria-label="Three-stage IFT encoding pipeline diagram">
      <defs>
       <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
        <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--h3-fg)" />
       </marker>
      </defs>
-     <!-- Input Box -->
-     <rect x="10" y="35" width="145" height="110" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="82" y="68" text-anchor="middle" fill="var(--slide-fg)" font-size="14" font-weight="bold">Input Font</text>
-     <text x="82" y="90" text-anchor="middle" fill="var(--slide-fg)" font-size="11">.ttf / .otf</text>
+     <rect x="10" y="30" width="145" height="110" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="82" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="14" font-weight="bold">Input Font</text>
+     <text x="82" y="88" text-anchor="middle" fill="var(--slide-fg)" font-size="11">.ttf / .otf</text>
      <text x="82" y="112" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-weight="bold">+ Freq Data</text>
-     <text x="82" y="128" text-anchor="middle" fill="var(--slide-fg)" font-size="10">(ift-encoder-data)</text>
 
-     <line x1="155" y1="90" x2="195" y2="90" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="155" y1="85" x2="195" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <!-- Stage 1 -->
-     <rect x="200" y="20" width="185" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="292" y="45" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">1. Auto Config</text>
-     <text x="292" y="66" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Detect scripts &amp; overlaps</text>
-     <text x="292" y="84" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Pick Quality Level (1–7)</text>
-     <text x="292" y="102" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Form Merge Groups</text>
-     <rect x="218" y="118" width="148" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="292" y="136" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmenterConfig</text>
+     <rect x="200" y="15" width="185" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="292" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">1. Auto Config</text>
+     <text x="292" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Detect &amp; group scripts</text>
+     <text x="292" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Pick Quality Level (1–7)</text>
+     <rect x="218" y="112" width="148" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="292" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmenterConfig</text>
 
-     <line x1="385" y1="90" x2="425" y2="90" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="385" y1="85" x2="425" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <!-- Stage 2 -->
-     <rect x="430" y="20" width="200" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="530" y="45" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">2. Segmenter &amp; Merger</text>
-     <text x="530" y="66" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Dep Graph condition extract</text>
-     <text x="530" y="84" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Init font &amp; cost-based merging</text>
-     <text x="530" y="102" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Closure validation</text>
-     <rect x="450" y="118" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="530" y="136" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmentationPlan</text>
+     <rect x="430" y="15" width="200" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="530" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">2. Segmenter</text>
+     <text x="530" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Dep graph conditions</text>
+     <text x="530" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Cost-based merging</text>
+     <rect x="450" y="112" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="530" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmentationPlan</text>
 
-     <line x1="630" y1="90" x2="670" y2="90" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="630" y1="85" x2="670" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <!-- Stage 3 -->
-     <rect x="675" y="20" width="195" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="772" y="45" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">3. IFT Compiler</text>
-     <text x="772" y="66" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Walk table-keyed DAG</text>
-     <text x="772" y="84" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Build EntryGraph &amp; patch maps</text>
-     <text x="772" y="102" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Subset &amp; Brotli diff binaries</text>
-     <rect x="692" y="118" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="772" y="136" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">font.woff2 + patches</text>
+     <rect x="675" y="15" width="195" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="772" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">3. Compiler</text>
+     <text x="772" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Walk table-keyed DAG</text>
+     <text x="772" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Emit patch maps &amp; diffs</text>
+     <rect x="692" y="112" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="772" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">font.woff2 + patches</text>
     </svg>
    </figure>
-   <ul>
-    <li><strong>Clean Separation of Concerns:</strong> Stages 1 &amp; 2 make all high-level policy and optimization decisions; Stage 3 is a deterministic low-level compiler that executes the <code>SegmentationPlan</code>.</li>
-    <li><strong>Inspectable Protobuf Contracts:</strong> Intermediate artifacts are human-readable textprotos (<code>segmenter_config.proto</code> and <code>segmentation_plan.proto</code>).</li>
+   <ul class="compact">
+    <li><strong>Policy vs. Mechanism:</strong> Stages 1 &amp; 2 optimize the plan; Stage 3 deterministically compiles it.</li>
+    <li><strong>Textproto Contracts:</strong> Inspectable <code>segmenter_config.proto</code> and <code>segmentation_plan.proto</code>.</li>
    </ul>
   </section>
 
@@ -176,28 +135,23 @@
        SLIDE 5: PRODUCING IFT FONTS - AUTO CONFIG
   ===================================================================== -->
   <section class="slide" id="producing-auto">
-   <h2>Producing IFT Fonts: Single-Step Auto Config</h2>
-   <p>The simplest way to encode an IFT font is <code>//util:font2ift</code>, which runs all three stages automatically with zero required configuration:</p>
-   <pre><code>bazel run -c opt //util:font2ift -- \
-  --input_font="$HOME/myfont/MyFont.ttf" \
-  --output_path="$HOME/myfont/ift/" \
-  --output_font="MyFont-IFT.woff2"</code></pre>
+   <h2>Single-Step Workflow: font2ift</h2>
+   <pre><code>font2ift --input_font=MyFont.ttf --output_path=ift/ --output_font=MyFont.woff2</code></pre>
    <div class="columns">
     <section>
      <h3>--auto_config_primary_script</h3>
-     <p>Specifies the primary script or language the font is deployed for (values from <code>w3c/ift-encoder-data</code>, e.g., <code>Script_japanese</code>, <code>Script_bengali</code>, <code>Language_fr</code>):</p>
-     <ul>
-      <li>Enables primary script codepoints to merge into the <strong>initial font</strong>.</li>
-      <li>Splits overlapping script clusters (e.g. CJK) to prioritize the primary script's frequency distribution.</li>
+     <ul class="compact">
+      <li>Target script (e.g., <code>Script_japanese</code>).</li>
+      <li>Merges top glyphs into the <strong>initial font</strong>.</li>
+      <li>Splits overlapping script clusters.</li>
      </ul>
     </section>
     <section>
      <h3>--auto_config_quality</h3>
-     <p>Analogous to a compression library quality level (<code>1</code> to <code>7</code>):</p>
-     <ul>
-      <li>Controls how much CPU effort is spent optimizing the segmentation.</li>
-      <li>Higher values increase encoding time but reduce average bytes transferred by clients.</li>
-      <li>Automatically selected by heuristic if omitted.</li>
+     <ul class="compact">
+      <li>Optimization level (<code>1</code> to <code>7</code>).</li>
+      <li>Trades CPU time for smaller transfer bytes.</li>
+      <li>Auto-selected by heuristic if omitted.</li>
      </ul>
     </section>
    </div>
@@ -211,42 +165,29 @@
        SLIDE 6: PRODUCING IFT FONTS - MULTI-STEP WORKFLOW
   ===================================================================== -->
   <section class="slide" id="producing-multistep">
-   <h2>Producing IFT Fonts: Multi-Step Advanced Workflow</h2>
-   <p>When fine-grained control or custom experimentation is needed, each stage can be invoked individually and hand-tuned:</p>
+   <h2>Multi-Step Advanced Workflow</h2>
    <div class="columns">
     <section>
-     <h3>Step 1: Segmenter Config</h3>
-     <pre><code>bazel run -c opt \
-  //util:gen_ift_segmenter_config -- \
+     <h3>1. Generate Config</h3>
+     <pre><code>gen_ift_segmenter_config \
   --quality=5 \
   --input_font=MyFont.ttf \
   &gt; config.txtpb</code></pre>
-     <p class="note">Or hand-author using <code>segmenter_config.proto</code> (custom merge groups, custom Riegeli frequency files, custom thresholds).</p>
     </section>
     <section>
-     <h3>Step 2: Segmentation Plan</h3>
-     <pre><code>bazel run -c opt \
-  //util:gen_ift_segmentation_plan -- \
+     <h3>2. Generate Plan</h3>
+     <pre><code>gen_ift_segmentation_plan \
   --input_font=MyFont.ttf \
   --config=config.txtpb \
   &gt; plan.txtpb</code></pre>
-     <p class="note">Generates glyph-keyed patches, CNF conditions, and optional table-keyed segments (or combine with <code>gen_ift_table_keyed_plan</code>).</p>
-    </section>
-    <section>
-     <h3>Step 3: Compile IFT Font</h3>
-     <pre><code>bazel run -c opt \
-  //util:font2ift -- \
-  --input_font=MyFont.ttf \
-  --plan=plan.txtpb \
-  --output_path=out/ \
-  --output_font=MyFont.ift.woff2</code></pre>
-     <p class="note">Executes <code>plan.txtpb</code> to emit the initial WOFF2 font and all <code>.ift_gk</code> / <code>.ift_tk</code> patches.</p>
     </section>
    </div>
+   <h3>3. Compile Font &amp; Patches</h3>
+   <pre><code>font2ift --input_font=MyFont.ttf --plan=plan.txtpb --output_path=out/ --output_font=MyFont.woff2</code></pre>
   </section>
 
   <section class="comment">
-   <p>For advanced use cases—such as inspecting intermediate plans, supplying custom frequency datasets, or tuning merge parameters—each stage has its own CLI utility: <code>gen_ift_segmenter_config</code>, <code>gen_ift_segmentation_plan</code>, and finally <code>font2ift --plan=...</code>.</p>
+   <p>For advanced use cases—such as inspecting intermediate plans, supplying custom frequency datasets, or tuning merge parameters—each stage has its own CLI utility: <code>gen_ift_segmenter_config</code>, <code>gen_ift_segmentation_plan</code> (or <code>gen_ift_table_keyed_plan</code>), and finally <code>font2ift --plan=...</code>.</p>
   </section>
 
   <!-- ====================================================================
@@ -266,13 +207,12 @@
   ===================================================================== -->
   <section class="slide" id="autoconfig-overview">
    <h2>What AutoSegmenterConfig Does</h2>
-   <p>Given only an input <code>hb_face_t*</code> (plus optional <code>primary_script</code> and <code>quality_level</code>), <code>AutoSegmenterConfig::GenerateConfig</code> synthesizes a complete <code>SegmenterConfig</code>:</p>
-   <ol>
-    <li><strong>Script Detection:</strong> Intersects font codepoints against built-in frequency datasets from <code>w3c/ift-encoder-data</code> (183 logical script &amp; language datasets).</li>
-    <li><strong>Overlap Clustering:</strong> Groups scripts that share a significant fraction of their unigram probability mass into unified <code>MergeGroup</code>s.</li>
-    <li><strong>Primary Script Prioritization:</strong> Enables initial-font merging for the primary script (defaulting to <code>Script_latin</code>) and isolates it from overlapping secondary scripts.</li>
-    <li><strong>Table-Keyed Graph Setup:</strong> Configures <code>FROM_FREQ_DATA</code> table-keyed segments, <code>jump_ahead = 2</code>, <code>use_prefetch_lists = true</code>, and caps <code>max_depth</code> so total table-keyed patches stay &le; 2048.</li>
-    <li><strong>Quality Level Selection:</strong> Applies either the user-requested quality level (<code>1..7</code>) or the Auto Quality Heuristic based on font codepoint count.</li>
+   <ol class="compact">
+    <li><strong>Script Detection:</strong> Matches codepoints against 183 datasets in <code>ift-encoder-data</code>.</li>
+    <li><strong>Overlap Clustering:</strong> Unions scripts with &ge; 10% overlap into shared <code>MergeGroup</code>s.</li>
+    <li><strong>Primary Script Priority:</strong> Scopes initial-font merging and splits clusters.</li>
+    <li><strong>Table-Keyed Setup:</strong> 1 segment/script, <code>jump_ahead=2</code>, prefetch lists, <code>max_depth</code>.</li>
+    <li><strong>Quality Selection:</strong> Applies level <code>1..7</code> or the Auto Quality Heuristic.</li>
    </ol>
   </section>
 
@@ -287,28 +227,27 @@
    <h2>Script Detection &amp; Overlap Clustering</h2>
    <div class="columns">
     <section>
-     <h3>1. Detecting Present Scripts</h3>
-     <ul>
-      <li>Computes <code>non_cjk_common</code>: codepoints appearing in &ge; 2 non-CJK script datasets.</li>
-      <li>A script is detected if the font contains &gt; 1 codepoint unique to that script (after subtracting <code>non_cjk_common</code>).</li>
-      <li>CJK scripts (<code>Japanese</code>, <code>Korean</code>, <code>Chinese-simplified</code>, <code>Chinese-traditional</code>) share unified Han ideographs, so CJK-specific overlap is kept during detection.</li>
+     <h3>1. Script Detection</h3>
+     <ul class="compact">
+      <li>Subtracts <code>non_cjk_common</code> (&ge; 2 non-CJK scripts).</li>
+      <li>Detects script if &gt; 1 unique codepoint remains.</li>
+      <li>Preserves CJK overlap so Han scripts stay active.</li>
      </ul>
     </section>
     <section>
-     <h3>2. Clustering Overlapping Scripts</h3>
-     <ul>
-      <li><strong>Why cluster?</strong> Any segment present in &gt; 1 merge group becomes a <em>shared segment</em> and is excluded from cost-based merging!</li>
-      <li><strong>Naive intersection fails:</strong> Almost all scripts share space (<code>U+0020</code>) or basic punctuation.</li>
-      <li><strong>Probability Mass Overlap:</strong> Filters out control/format/space &amp; combining marks (<code>U+0300..U+0400</code>), then measures shared unigram probability mass using the lightweight 1.5 MB unigram dataset:
-       max( <var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub> &cap; <var>S</var><sub><var>j</var></sub>) / <var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub>), &nbsp;<var>P</var><sub><var>j</var></sub>(<var>S</var><sub><var>i</var></sub> &cap; <var>S</var><sub><var>j</var></sub>) / <var>P</var><sub><var>j</var></sub>(<var>S</var><sub><var>j</var></sub>) ) &nbsp;&ge;&nbsp; 0.10</li>
+     <h3>2. Overlap Clustering</h3>
+     <ul class="compact">
+      <li>Ignores spaces, controls &amp; combining marks.</li>
+      <li>Unions scripts with &ge; <strong>10%</strong> shared probability mass:
+       <br><var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub> &cap; <var>S</var><sub><var>j</var></sub>) / <var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub>) &ge; 0.10</li>
+      <li><strong><code>NotoSansJP</code>:</strong> <code>Hans+Hant+Jpan+Kore</code> (&gt; 98%).</li>
      </ul>
     </section>
    </div>
-   <p class="note"><strong>Example (<code>NotoSansJP</code>):</strong> CJK scripts share &gt; 98% probability mass &rarr; grouped into <code>Chinese-simplified+Chinese-traditional+Japanese+Korean</code>; Emoji/Latin/Symbols group into <code>Emoji+Latin+Symbols</code>; <code>Greek</code> and <code>Cyrillic</code> form separate singleton groups.</p>
   </section>
 
   <section class="comment">
-   <p>A subtle problem arises when a font supports multiple scripts: if two scripts share codepoints and are placed in separate merge groups, those shared codepoints are excluded from cost merging. Conversely, if we group any two scripts that share a single codepoint, spaces and punctuation chain every script into one giant group. Our solution is to filter out spaces, controls, and common combining marks, and then measure what fraction of each script's total unigram probability mass is covered by their shared codepoints. If that fraction is at least 10% (<code>kScriptOverlapThreshold = 0.10</code>), we union them into a single merge group.</p>
+   <p>If two scripts share codepoints and are placed in separate merge groups, those shared codepoints are excluded from cost merging. Conversely, grouping on any shared codepoint chains everything together via spaces and punctuation. We filter out spaces, controls, and combining marks, and union scripts whose shared codepoints cover at least 10% of either script's unigram probability mass (<code>kScriptOverlapThreshold = 0.10</code>).</p>
   </section>
 
   <!-- ====================================================================
@@ -316,167 +255,69 @@
   ===================================================================== -->
   <section class="slide" id="quality-levels">
    <h2>Auto Config: Quality Levels (1–7)</h2>
-   <p>Quality levels coordinate 7 internal parameters to trade off encoding CPU time against client transfer efficiency (<code>auto_segmenter_config.cc</code>):</p>
    <table class="striped">
     <thead>
      <tr>
       <th>Quality</th>
       <th>Bigrams</th>
-      <th>Cond. Simplification</th>
-      <th>Init Font Brotli</th>
+      <th>Cond. Simplify</th>
+      <th>Init Brotli</th>
       <th>Merge Brotli</th>
-      <th>Init Font Prob. Cutoff</th>
+      <th>Init Prob.</th>
       <th>Opt. Cutoff</th>
-      <th>Preprocess Merge Cutoff</th>
+      <th>Pre-Group</th>
      </tr>
     </thead>
     <tbody>
-     <tr>
-      <td><strong>1 (MIN)</strong></td>
-      <td>No (Unigrams)</td>
-      <td><strong>Yes</strong> (Superset)</td>
-      <td><code>0</code> (Est.)</td>
-      <td><code>0</code> (Est.)</td>
-      <td>60%</td>
-      <td>5.0%</td>
-      <td>5.0%</td>
-     </tr>
-     <tr>
-      <td><strong>2</strong></td>
-      <td>No (Unigrams)</td>
-      <td>No (Exact CNF)</td>
-      <td><code>0</code> (Est.)</td>
-      <td><code>0</code> (Est.)</td>
-      <td>54%</td>
-      <td>4.0%</td>
-      <td>4.0%</td>
-     </tr>
-     <tr>
-      <td><strong>3</strong></td>
-      <td><strong>Yes</strong></td>
-      <td>No (Exact CNF)</td>
-      <td><code>0</code> (Est.)</td>
-      <td><code>0</code> (Est.)</td>
-      <td>48%</td>
-      <td>3.0%</td>
-      <td>3.0%</td>
-     </tr>
-     <tr>
-      <td><strong>4</strong></td>
-      <td><strong>Yes</strong></td>
-      <td>No (Exact CNF)</td>
-      <td><code>0</code> (Est.)</td>
-      <td><strong><code>9</code></strong></td>
-      <td>42%</td>
-      <td>2.0%</td>
-      <td>2.0%</td>
-     </tr>
-     <tr>
-      <td><strong>5</strong></td>
-      <td><strong>Yes</strong></td>
-      <td>No (Exact CNF)</td>
-      <td><strong><code>9</code></strong></td>
-      <td><strong><code>9</code></strong></td>
-      <td>36%</td>
-      <td>1.0%</td>
-      <td>1.0%</td>
-     </tr>
-     <tr>
-      <td><strong>6</strong></td>
-      <td><strong>Yes</strong></td>
-      <td>No (Exact CNF)</td>
-      <td><code>9</code></td>
-      <td><strong><code>11</code></strong></td>
-      <td>30%</td>
-      <td>0.5%</td>
-      <td>0.5%</td>
-     </tr>
-     <tr>
-      <td><strong>7 (MAX)</strong></td>
-      <td><strong>Yes</strong></td>
-      <td>No (Exact CNF)</td>
-      <td><strong><code>11</code></strong></td>
-      <td><strong><code>11</code></strong></td>
-      <td>25%</td>
-      <td>0.5%</td>
-      <td>0.05%</td>
-     </tr>
+     <tr><td><strong>1 (MIN)</strong></td><td>No</td><td><em>Yes</em></td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
+     <tr><td><strong>2</strong></td><td>No</td><td>No</td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>54%</td><td>4.0%</td><td>4.0%</td></tr>
+     <tr><td><strong>3</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>48%</td><td>3.0%</td><td>3.0%</td></tr>
+     <tr><td><strong>4</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> (Est.)</td><td><strong><code>9</code></strong></td><td>42%</td><td>2.0%</td><td>2.0%</td></tr>
+     <tr><td><strong>5</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>9</code></strong></td><td><strong><code>9</code></strong></td><td>36%</td><td>1.0%</td><td>1.0%</td></tr>
+     <tr><td><strong>6</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>9</code></td><td><strong><code>11</code></strong></td><td>30%</td><td>0.5%</td><td>0.5%</td></tr>
+     <tr><td><strong>7 (MAX)</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>11</code></strong></td><td><strong><code>11</code></strong></td><td>25%</td><td>0.5%</td><td>0.05%</td></tr>
     </tbody>
    </table>
-   <ul class="compact">
-    <li><strong>Brotli <code>0</code>:</strong> Disables live Brotli calls during merging; estimates patch sizes via a fixed font-wide compression ratio.</li>
-    <li><strong>All Qualities:</strong> Set <code>min_group_size = 4</code>, <code>network_overhead_cost = 200</code>, <code>experimental_use_patch_merges = true</code>, and ungrouped pre-merge size = <code>12</code>.</li>
-   </ul>
   </section>
 
   <section class="comment">
-   <p>Here is the complete table of the seven quality levels defined in <code>auto_segmenter_config.cc</code>. Notice how lower quality levels shed expensive operations step by step: Quality 6 and 7 use Brotli 11 during merging; Quality 4 and 5 drop to Brotli 9; Quality 1 to 3 disable live Brotli calls during merging (Brotli 0, using a fixed compression ratio estimate); Quality 1 and 2 disable bigram co-occurrence calculations; and Quality 1 also enables composite condition simplification while raising the pre-closure grouping and optimization cutoffs to 5%.</p>
+   <p>Here are the seven quality levels in <code>auto_segmenter_config.cc</code>. Lower quality levels progressively shed expensive operations: Q6–Q7 use Brotli 11 during merging; Q4–Q5 drop to Brotli 9; Q1–Q3 use Brotli 0 (linear size estimation from raw outline bytes); Q1–Q2 use unigrams instead of bigrams; and Q1 simplifies composite conditions while raising cutoffs to 5%. All levels use <code>min_group_size = 4</code> and <code>network_overhead_cost = 200</code>.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 11: AUTO QUALITY HEURISTIC
   ===================================================================== -->
   <section class="slide" id="auto-quality-heuristic">
-   <h2>Auto Config: The Auto Quality Heuristic</h2>
+   <h2>The Auto Quality Heuristic</h2>
    <div class="columns">
-    <div>
-     <h3>Current Heuristic (AutoPickQuality)</h3>
-     <p>Selects a quality level based on the font's total Unicode codepoint count, calibrated across the <strong>Google Fonts corpus</strong> (~2,057 families) so that fewer than <strong>0.5%</strong> of fonts in a bin take &ge; 10 minutes to segment:</p>
+    <section>
+     <h3>Codepoint Bins</h3>
      <table class="striped">
       <thead>
-       <tr>
-        <th>Codepoint Count Bin</th>
-        <th>Selected Quality</th>
-        <th>Corpus % &ge; 10 min</th>
-       </tr>
+       <tr><th>Codepoints</th><th>Quality</th><th>&ge; 10 min</th></tr>
       </thead>
       <tbody>
-       <tr>
-        <td><code>[1, 300]</code></td>
-        <td><strong>Quality 7</strong></td>
-        <td>0.3%</td>
-       </tr>
-       <tr>
-        <td><code>(300, 1500]</code></td>
-        <td><strong>Quality 6</strong></td>
-        <td>0.3%</td>
-       </tr>
-       <tr>
-        <td><code>(1500, 3100]</code></td>
-        <td><strong>Quality 4</strong></td>
-        <td>0.0%</td>
-       </tr>
-       <tr>
-        <td><code>(3100, 30000]</code></td>
-        <td><strong>Quality 2</strong></td>
-        <td>0.0%</td>
-       </tr>
-       <tr>
-        <td><code>(30000, ∞)</code></td>
-        <td><strong>Quality 1</strong></td>
-        <td>28.6%</td>
-       </tr>
+       <tr><td><code>1 – 300</code></td><td><strong>Q7</strong></td><td>0.3%</td></tr>
+       <tr><td><code>301 – 1,500</code></td><td><strong>Q6</strong></td><td>0.3%</td></tr>
+       <tr><td><code>1,501 – 3,100</code></td><td><strong>Q4</strong></td><td>0.0%</td></tr>
+       <tr><td><code>3,101 – 30,000</code></td><td><strong>Q2</strong></td><td>0.0%</td></tr>
+       <tr><td><code>&gt; 30,000</code></td><td><strong>Q1</strong></td><td>28.6%</td></tr>
       </tbody>
      </table>
-    </div>
+    </section>
     <section>
-     <h3>Why Codepoint Count Alone Isn't Enough</h3>
-     <ul>
-      <li>Some smaller fonts (e.g., complex Arabic/Nastaliq or Indic fonts with deep contextual <code>GSUB</code> chains) have high condition complexity despite moderate codepoint counts.</li>
-      <li>Conversely, large multi-script fonts partitioned into many small, disjoint merge groups run much faster than a monolithic CJK group of the same total size.</li>
-     </ul>
-     <h3>Future Direction: Budget-Driven Selection</h3>
-     <ul>
-      <li>Accept a target encoding time budget (e.g., <code>O(1 min)</code>, <code>O(10 min)</code>).</li>
-      <li>Sample a few Brotli &amp; closure operations on the target font to measure per-op cost.</li>
-      <li>Estimate total Brotli &amp; condition operations per merge group (incorporating condition complexity) and pick per-group quality settings to fit the budget.</li>
+     <h3>Limits &amp; Future Work</h3>
+     <ul class="compact">
+      <li><strong>Limits:</strong> Complex <code>GSUB</code> (Arabic/Indic) can be slow.</li>
+      <li><strong>Time Budget:</strong> Sample Brotli &amp; closure speed.</li>
+      <li><strong>Per-Group Quality:</strong> Scale by condition complexity.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>When the user doesn't specify a quality flag, <code>AutoPickQuality</code> picks a default based on the number of codepoints in the font. We calibrated these five bins across the entire Google Fonts library so that for fonts up to 30,000 codepoints, fewer than 0.5% of runs exceed 10 minutes. In the future, we plan to evolve this into a dynamic cost-model estimator that factors in per-merge-group sizes and OpenType layout condition complexity.</p>
+   <p>When the user omits a quality flag, <code>AutoPickQuality</code> picks a default based on codepoint count, calibrated across the Google Fonts library so that for fonts up to 30,000 codepoints, fewer than 0.5% of runs exceed 10 minutes. In the future, we plan to evolve this into a time-budget estimator that samples Brotli/closure speed and factors in per-merge-group sizes and condition complexity.</p>
   </section>
 
   <!-- ====================================================================
@@ -496,18 +337,17 @@
   ===================================================================== -->
   <section class="slide" id="segmentation-problem">
    <h2>The Glyph Segmentation Problem</h2>
-   <p>In an IFT font, the client decides which patches to load based on the <strong>Unicode codepoints</strong> and <strong>layout features</strong> present in the document—but outline patches contain <strong>Glyph IDs (GIDs)</strong>.</p>
    <div class="columns">
-    <div>
-     <h3>Why Is This Non-Trivial?</h3>
-     <ul>
-      <li>OpenType tables (<code>cmap 14</code> UVS, <code>GSUB</code> ligatures, contextual/chaining substitutions, <code>glyf</code> composites, <code>COLR</code> layers) dynamically substitute or combine glyphs during shaping.</li>
-      <li>If glyph <code>f</code> is in Patch 1 and glyph <code>i</code> is in Patch 2, rendering <code>"fi"</code> loads both patches—which activates the <code>GSUB</code> rule <code>f + i → fi</code>!</li>
-      <li>The <code>fi</code> ligature glyph <strong>must</strong> be available whenever both <code>f</code> and <code>i</code> are present.</li>
+    <section>
+     <h3>Codepoints vs. Glyphs</h3>
+     <ul class="compact">
+      <li>Conditions match <strong>codepoints &amp; features</strong>; patches hold <strong>Glyph IDs</strong>.</li>
+      <li><code>GSUB</code>, <code>cmap 14</code>, <code>glyf</code>, and <code>COLR</code> substitute glyphs.</li>
+      <li><strong>Ligature <code>f + i → fi</code>:</strong> Requires a 3rd patch for <code>fi</code> under <code>(f AND i)</code>.</li>
      </ul>
-    </div>
+    </section>
     <figure>
-    <svg style="text-shadow: none" viewBox="0 0 380 210" width="370" height="205" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
+     <svg style="text-shadow: none" viewBox="0 0 380 210" width="370" height="205" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
       <rect x="15" y="15" width="145" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
       <text x="87" y="38" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Patch 1: {gid_f}</text>
       <text x="87" y="60" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">if (U+0066 'f')</text>
@@ -523,7 +363,7 @@
       <text x="190" y="155" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Patch 3: {gid_fi} (Ligature)</text>
       <text x="190" y="178" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">if (U+0066 'f' AND U+0069 'i')</text>
      </svg>
-   </figure>
+    </figure>
    </div>
   </section>
 
@@ -535,30 +375,18 @@
        SLIDE 14: CORE CONCEPTS & THE CLOSURE REQUIREMENT
   ===================================================================== -->
   <section class="slide" id="closure-requirement">
-   <h2>Core Concepts &amp; The Closure Requirement</h2>
-   <div class="columns">
-    <section>
-     <h3>Segment (<var>s</var><sub><var>i</var></sub>)</h3>
-     <p>The atomic unit of extension: a disjoint set of Unicode codepoints and/or OpenType layout feature tags.</p>
-    </section>
-    <section>
-     <h3>Initial Font (<var>s</var><sub>0</sub>)</h3>
-     <p>Baseline codepoints, features, and glyphs included directly in the initial WOFF2 font—always loaded with zero patch overhead.</p>
-    </section>
-    <section>
-     <h3>Disjoint Patches</h3>
-     <p>Every glyph outside <var>s</var><sub>0</sub> is placed in <strong>exactly one</strong> glyph-keyed patch. Glyphs are never duplicated across patches.</p>
-    </section>
-   </div>
-   <p><strong>The Closure Requirement:</strong><br>
-    For any subset definition <var>D</var> (Unicode codepoints + feature tags), the set of glyphs loaded from the Initial Font <var>s</var><sub>0</sub> and all patches <var>p</var><sub><var>i</var></sub> whose activation condition <var>c</var><sub><var>i</var></sub>(<var>D</var>) = true must satisfy:
-    <br>
-    Glyphs(<var>s</var><sub>0</sub>) &cup; &bigcup;<sub><var>c</var><sub><var>i</var></sub>(<var>D</var>) = true</sub> Glyphs(<var>p</var><sub><var>i</var></sub>) &nbsp;&supe;&nbsp; closure(Font, <var>D</var>)</p>
-   <p class="note">Satisfying the closure requirement guarantees that shaping and rendering any text covered by <var>D</var> on the extended IFT font produces <strong>identical output</strong> to the original unsubsetted font.</p>
+   <h2>The Closure Requirement</h2>
+   <ul class="compact">
+    <li><strong>Segment (<var>s</var><sub><var>i</var></sub>):</strong> Atomic set of Unicode codepoints and/or feature tags.</li>
+    <li><strong>Initial Font (<var>s</var><sub>0</sub>):</strong> Baseline glyphs included in the initial WOFF2 font.</li>
+    <li><strong>Disjoint Patches:</strong> Every glyph outside <var>s</var><sub>0</sub> belongs to <strong>exactly one</strong> patch.</li>
+   </ul>
+   <h3>Closure Invariant</h3>
+   <p>For any subset <var>D</var>: &nbsp;<strong>Glyphs(<var>s</var><sub>0</sub>) &cup; &bigcup;<sub><var>c</var><sub><var>i</var></sub>(<var>D</var>) = true</sub> Glyphs(<var>p</var><sub><var>i</var></sub>) &nbsp;&supe;&nbsp; closure(Font, <var>D</var>)</strong></p>
   </section>
 
   <section class="comment">
-   <p>Every segmentation plan produced by our segmenter must uphold two invariants: first, glyph patches are strictly disjoint so we never waste bandwidth duplicating glyph outlines across patches; second, it must satisfy the Closure Requirement—for any combination of codepoints and features, the loaded patches must be a superset of the HarfBuzz subsetter glyph closure for that subset definition.</p>
+   <p>Every segmentation plan must uphold two invariants: first, glyph patches are strictly disjoint so we never duplicate glyph outlines across patches; second, it must satisfy the Closure Requirement—for any combination of codepoints and features, the loaded patches must be a superset of the HarfBuzz subsetter glyph closure for that subset definition.</p>
   </section>
 
   <!-- ====================================================================
@@ -566,71 +394,57 @@
   ===================================================================== -->
   <section class="slide" id="segmenting-algorithm-overview">
    <h2>High-Level Segmenting Algorithm</h2>
-   <p>Implemented in <code>ClosureGlyphSegmenter::CodepointToGlyphSegments</code> (<code>closure_glyph_segmenter.cc</code>):</p>
-   <ol>
-    <li><strong>Initialize Fine-Grained Segments:</strong> Start with each Unicode codepoint and optional layout feature supported by the font as an individual segment (optionally pre-grouping low-probability tail codepoints into groups of 4).</li>
-    <li><strong>Extract Glyph Activation Conditions:</strong> Analyze intra-font dependencies with respect to the initial segments to assign every glyph a normalized boolean activation condition in terms of segments.</li>
-    <li><strong>Form Initial Patch Groupings:</strong> Group all glyphs that share an identical activation condition into an initial patch set:
-     <ul>
-      <li><em>Exclusive patches:</em> triggered by a single segment <code>if (s_i)</code></li>
-      <li><em>Conjunctive / Disjunctive / Composite patches:</em> triggered by boolean combinations e.g. <code>if ((s_1 OR s_2) AND s_3)</code></li>
-     </ul>
-    </li>
-    <li><strong>Initial Font Merging:</strong> Evaluate high-probability patches and move those that reduce total expected cost (plus any unmapped fallback glyphs) into the Initial Font (<var>s</var><sub>0</sub>).</li>
-    <li><strong>Iterative Cost &amp; Heuristic Merging:</strong> Within each isolated Merge Group, iteratively merge segments and patches to minimize the expected byte cost function and satisfy minimum group sizes.</li>
+   <ol class="compact">
+    <li><strong>Initialize:</strong> 1 segment per codepoint/feature (pre-grouping rare tail in 4s).</li>
+    <li><strong>Extract Conditions:</strong> Assign each glyph a normalized CNF condition.</li>
+    <li><strong>Initial Patches:</strong> Group glyphs with identical conditions into patches.</li>
+    <li><strong>Initial Font Merging:</strong> Move high-probability &amp; fallback glyphs to <var>s</var><sub>0</sub>.</li>
+    <li><strong>Iterative Merging:</strong> Merge segments/patches to minimize cost &amp; meet <code>min_group_size</code>.</li>
    </ol>
   </section>
 
   <section class="comment">
-   <p>Rather than trying to guess coarse codepoint blocks upfront, our segmenter works bottom-up: we start with the finest possible segmentation (one segment per codepoint and feature), extract exact glyph activation conditions, group glyphs with identical conditions into initial patches, merge near-100% probability patches into the initial font, and then iteratively merge segments and patches guided by our expected-byte cost function.</p>
+   <p>Implemented in <code>ClosureGlyphSegmenter::CodepointToGlyphSegments</code>. We start with the finest possible segmentation (one segment per codepoint and feature), extract exact glyph activation conditions, group glyphs with identical conditions into initial patches, merge high-probability patches into the initial font, and iteratively merge segments and patches guided by our cost function.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 16: CONDITION ANALYSIS MODES
   ===================================================================== -->
   <section class="slide" id="condition-analysis-modes">
-   <h2>Condition Analysis: Closure vs. Dependency Graph</h2>
-   <p>The segmenter supports two mechanisms for discovering per-glyph activation conditions (<code>ConditionAnalysisMode</code>):</p>
+   <h2>Condition Analysis Modes</h2>
    <div class="columns">
     <section>
-     <h3>1. Subsetter Closure Analysis (CLOSURE_ONLY)</h3>
-     <p><em>Legacy</em> Treats <code>hb_subset</code> glyph closure as a black box. For each segment <var>s</var><sub><var>i</var></sub>:</p>
-     <ul>
-      <li><var>A</var> = closure(&bigcup;<sub>all</sub> <var>s</var><sub><var>j</var></sub>), &nbsp;<var>B</var> = closure(&bigcup;<sub><var>j</var>&ne;<var>i</var></sub> <var>s</var><sub><var>j</var></sub>)</li>
-      <li><var>I</var> = closure(<var>s</var><sub>0</sub> &cup; <var>s</var><sub><var>i</var></sub>) &setminus; closure(<var>s</var><sub>0</sub>) (activated by <var>s</var><sub><var>i</var></sub>)</li>
-      <li><var>D</var> = <var>A</var> &setminus; <var>B</var> (dropped when <var>s</var><sub><var>i</var></sub> is removed)</li>
-      <li><strong>Exclusive:</strong> <var>D</var> &cap; <var>I</var> &rArr; <var>s</var><sub><var>i</var></sub></li>
-      <li><strong>Conjunctive:</strong> <var>D</var> &setminus; <var>I</var> &rArr; <var>s</var><sub><var>i</var></sub> &and; &hellip;</li>
-      <li><strong>Disjunctive:</strong> <var>I</var> &setminus; <var>D</var> &rArr; <var>s</var><sub><var>i</var></sub> &or; &hellip;</li>
+     <h3>1. Subsetter Closure (Legacy)</h3>
+     <ul class="compact">
+      <li><var>I</var> = closure(<var>s</var><sub>0</sub> &cup; <var>s</var><sub><var>i</var></sub>) &setminus; closure(<var>s</var><sub>0</sub>)</li>
+      <li><var>D</var> = closure(All) &setminus; closure(All &setminus; <var>s</var><sub><var>i</var></sub>)</li>
+      <li><strong>Exclusive:</strong> <var>D</var> &cap; <var>I</var> &nbsp;·&nbsp; <strong>AND:</strong> <var>D</var> &setminus; <var>I</var> &nbsp;·&nbsp; <strong>OR:</strong> <var>I</var> &setminus; <var>D</var></li>
+      <li>Slow O(<var>n</var>) closures; misses composites.</li>
      </ul>
-     <p class="note"><strong>Downsides:</strong> Requires O(<var>n</var>) full HarfBuzz closure invocations; misses complex multi-segment composite conditions (<var>s</var><sub>1</sub> &and; <var>s</var><sub>2</sub>) &or; (<var>s</var><sub>3</sub> &and; <var>s</var><sub>4</sub>).</p>
     </section>
     <section>
-     <h3>2. Dependency Graph Analysis (DEP_GRAPH_ONLY)</h3>
-     <p><em>Recommended Default</em> Directly extracts substitution &amp; composition rules into a directed graph (<code>DependencyGraph</code>):</p>
-     <ul>
-      <li>Propagates exact boolean conditions in a single phased topological pass via Tarjan's SCC algorithm.</li>
-      <li>Captures arbitrary composite CNF conditions (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &and; (<var>s</var><sub>3</sub> &or; <var>s</var><sub>4</sub>) directly without combinatorial closure probing.</li>
-      <li>Supports fast <strong>incremental invalidation</strong> during merging.</li>
-      <li><strong><code>DEP_GRAPH_ONLY_WITH_SIMPLIFICATION</code> (Q1):</strong> Simplifies composite conditions into pure disjunctive/conjunctive supersets for extreme fonts.</li>
+     <h3>2. Dependency Graph (Default)</h3>
+     <ul class="compact">
+      <li>Single phased Tarjan SCC pass.</li>
+      <li>Exact CNF: (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &and; (<var>s</var><sub>3</sub> &or; <var>s</var><sub>4</sub>).</li>
+      <li>Fast <strong>incremental invalidation</strong> on merges.</li>
+      <li><strong>Q1 Simplify:</strong> Reduces to pure AND/OR.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Originally, we inferred glyph conditions by treating HarfBuzz's subsetter closure as a black box—computing the full closure <var>A</var>, the closure without segment <var>s</var><sub><var>i</var></sub> (<var>B</var>), and the isolated closure of <var>s</var><sub><var>i</var></sub> (<var>I</var>). By intersecting <var>I</var> and <var>D</var> = <var>A</var> &minus; <var>B</var>, we could classify glyphs as exclusive (<var>D</var> &cap; <var>I</var>), conjunctive (<var>D</var> &minus; <var>I</var>), or disjunctive (<var>I</var> &minus; <var>D</var>). However, running hundreds of full subsetter closures is slow and struggles with composite conditions. Today, our default and recommended approach is <code>DEP_GRAPH_ONLY</code>, which builds an explicit dependency graph directly from the font's tables.</p>
+   <p>Originally, we inferred glyph conditions by treating HarfBuzz's subsetter closure as a black box—computing the full closure <var>A</var>, the closure without segment <var>s</var><sub><var>i</var></sub> (<var>B</var>), and the isolated closure of <var>s</var><sub><var>i</var></sub> (<var>I</var>). Today, our default approach is <code>DEP_GRAPH_ONLY</code>, which builds an explicit dependency graph directly from the font's tables.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 17: GLYPH AND UNICODE DEPENDENCY GRAPH - NODES
   ===================================================================== -->
   <section class="slide" id="dependency-graph-nodes">
-   <h2>The Closure Dependency Graph: Node Types</h2>
-   <p><code>DependencyGraph</code> (<code>ift/dep_graph/dependency_graph.h</code>) wraps the HarfBuzz dependency graph API and unifies four levels of font entities into a single directed graph:</p>
+   <h2>Dependency Graph: Node Types</h2>
    <figure>
     <svg style="text-shadow: none" viewBox="0 0 860 155" width="830" height="148" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
-     <!-- Segment Node -->
      <rect x="15" y="42" width="165" height="70" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="97" y="68" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
      <text x="97" y="88" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Entry point per segment s_i</text>
@@ -639,13 +453,11 @@
      <line x1="180" y1="62" x2="245" y2="42" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
      <line x1="180" y1="92" x2="245" y2="115" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <!-- Codepoint Node -->
      <rect x="250" y="8" width="225" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
      <text x="362" y="30" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Unicode Codepoint Node</text>
      <text x="362" y="48" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• Unicode decomp/comp &amp; bidi</text>
      <text x="362" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• cmap nominal &amp; cmap 14 UVS</text>
 
-     <!-- Feature Node -->
      <rect x="250" y="88" width="225" height="60" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
      <text x="362" y="110" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Feature Node</text>
      <text x="362" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• Non-default OpenType tags</text>
@@ -654,19 +466,17 @@
      <line x1="475" y1="42" x2="545" y2="65" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
      <line x1="475" y1="118" x2="545" y2="92" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <!-- Glyph Node -->
      <rect x="550" y="25" width="245" height="105" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="672" y="50" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node (GID)</text>
      <text x="672" y="70" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• GSUB (Single, Alternate, Ligature,</text>
      <text x="672" y="86" text-anchor="middle" fill="var(--slide-fg)" font-size="11">  Contextual / Chaining Subst)</text>
      <text x="672" y="104" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• glyf composites, COLR, MATH</text>
-     <!-- Self loop for Glyph -> Glyph -->
      <path d="M 795 58 C 845 45, 845 110, 795 95" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
      <text x="836" y="82" text-anchor="middle" fill="var(--slide-fg)" font-size="10">GID→GID</text>
     </svg>
    </figure>
-   <ul>
-    <li><strong>Unicode Closure Edges (<code>UnicodeEdges</code>):</strong> Models HarfBuzz's Unicode canonical decomposition/composition and bidi mirroring edges between codepoint nodes before <code>cmap</code> lookup.</li>
+   <ul class="compact">
+    <li>Unifies Segment, Unicode (canonical decomp/comp &amp; bidi), Feature, and Glyph dependencies into one directed graph.</li>
    </ul>
   </section>
 
@@ -678,34 +488,27 @@
        SLIDE 18: DEPENDENCY GRAPH EDGES & INITIAL FONT FOLDING
   ===================================================================== -->
   <section class="slide" id="dependency-graph-edges">
-   <h2>Dependency Graph: Edge Types &amp; Init Font Folding</h2>
+   <h2>Edge Types &amp; Initial Font Folding</h2>
    <div class="columns">
     <section>
-     <h3>Disjunctive Edge: <var>u</var> &rarr; <var>v</var></h3>
-     <p>Unconditional dependency: if node <var>u</var> is present, destination node <var>v</var> is required (<var>u</var> &rArr; <var>v</var>).</p>
-     <ul>
-      <li>Examples: <code>Segment → Codepoint</code>, nominal <code>cmap</code> mapping, <code>glyf</code> composite glyph → component glyph, <code>COLR</code> base glyph → layer glyphs, default-feature <code>GSUB</code> single/alternate substitution.</li>
+     <h3>Disjunctive: <var>u</var> &rarr; <var>v</var></h3>
+     <ul class="compact">
+      <li><var>u</var> alone requires <var>v</var> (<code>cmap</code>, <code>glyf</code>, <code>COLR</code>, default <code>GSUB</code>).</li>
      </ul>
      <h3>Initial Font Folding (<var>s</var><sub>0</sub>)</h3>
-     <p>All codepoints, features, and glyphs in the Initial Font are treated as <strong>already reached (<code>True</code>)</strong>:</p>
-     <ul>
-      <li>If <code>i</code> is in the Initial Font, the conjunctive edge <code>f → fi (ctx: {i})</code> automatically simplifies into a <strong>disjunctive edge</strong> <code>f → fi</code>!</li>
+     <ul class="compact">
+      <li>Nodes in <var>s</var><sub>0</sub> are <code>True</code> and stripped from contexts <var>C</var>.</li>
+      <li>If <code>i</code> &isin; <var>s</var><sub>0</sub>, <code>f → fi (ctx: {i})</code> becomes <code>f → fi</code>!</li>
      </ul>
     </section>
     <section>
-     <h3>Conjunctive Edge: <var>u</var> &mdash;(context <var>C</var>)&rarr; <var>v</var></h3>
-     <p>Conditional dependency: if source <var>u</var> <strong>AND all items in context <var>C</var></strong> (features, codepoints, and/or glyphs) are present, then <var>v</var> is required.</p>
-     <ul>
-      <li><strong>Symmetric Representation:</strong> For ligatures, features, and UVS pairs, an edge is added for <em>each</em> member of the conjunction:
-       <ul>
-        <li>Ligature <code>f + i → fi</code>:
-         <br><code>f → fi</code> with ctx = {<var>i</var>}
-         <br><code>i → fi</code> with ctx = {<var>f</var>}</li>
-        <li>UVS <code>a + VS1 → a.alt</code>:
-         <br><code>a → a.alt</code> with ctx = {VS1}
-         <br><code>VS1 → a.alt</code> with ctx = {<var>a</var>}</li>
-        <li>Optional Feature <code>smcp</code> on <code>a → a.sc</code>:
-         <br><code>a → a.sc</code> (ctx = {smcp}) &amp; <code>smcp → a.sc</code> (ctx = {<var>a</var>})</li>
+     <h3>Conjunctive: <var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var></h3>
+     <ul class="compact">
+      <li>Requires <var>u</var> <strong>AND all of context <var>C</var></strong>:
+       <ul class="compact">
+        <li><strong>Ligature:</strong> <code>f → fi</code> (ctx: {<var>i</var>})</li>
+        <li><strong>UVS:</strong> <code>a → a.alt</code> (ctx: {VS1})</li>
+        <li><strong>Feature:</strong> <code>a → a.sc</code> (ctx: {smcp})</li>
        </ul>
       </li>
      </ul>
@@ -714,101 +517,88 @@
   </section>
 
   <section class="comment">
-   <p>Edges in the dependency graph come in two flavors: disjunctive edges (<var>u</var> &rarr; <var>v</var>, meaning <var>u</var> alone triggers <var>v</var>) and conjunctive edges (<var>u</var> &rarr; <var>v</var> with a context set <var>C</var> of required features, codepoints, or glyphs). For ligatures, UVS mappings, and feature-gated lookups, the graph stores symmetric edges from every participant. Crucially, anything already in the initial font is folded out of all context sets immediately—so if <code>i</code> is in the initial font, the edge <code>f -> fi</code> loses its <code>{i}</code> context requirement and becomes a simple disjunctive edge.</p>
+   <p>Edges in the dependency graph come in two flavors: disjunctive edges (<var>u</var> &rarr; <var>v</var>, meaning <var>u</var> alone triggers <var>v</var>) and conjunctive edges (<var>u</var> &rarr; <var>v</var> with a context set <var>C</var> of required features, codepoints, or glyphs). Anything already in the initial font is folded out of all context sets immediately.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 19: TRAVERSAL MODES & CLOSURE PHASING
   ===================================================================== -->
   <section class="slide" id="dependency-graph-phasing">
-   <h2>Dependency Graph Traversal &amp; Closure Phasing</h2>
+   <h2>Graph Traversal &amp; Closure Phasing</h2>
    <div class="columns">
     <section>
      <h3>Two Traversal Modes</h3>
-     <ul>
-      <li><strong>Enforced Context Traversal:</strong>
-       <br>A conjunctive edge <var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var> is traversed only after <var>u</var> <em>and every node in <var>C</var></em> have been reached. Accurately mimics HarfBuzz's subsetting closure (may slightly over-approximate on complex contextual <code>GSUB</code> rules).</li>
-      <li><strong>Non-Enforced Context Traversal:</strong>
-       <br>Conjunctive edges are always traversed even if their context <var>C</var> is not met. Used to quickly find all glyphs/segments that <em>could potentially interact</em> with a starting node (e.g., scoping incremental invalidations).</li>
+     <ul class="compact">
+      <li><strong>Enforced Context:</strong> Traverses <var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var> only when <var>u</var> <em>and all of <var>C</var></em> are reached (matches HarfBuzz closure).</li>
+      <li><strong>Non-Enforced Context:</strong> Ignores <var>C</var>; finds all reachable glyphs for incremental updates.</li>
      </ul>
     </section>
     <section>
      <h3>Strict Closure Phasing</h3>
-     <p>To match HarfBuzz's glyph closure semantics, graph traversal and condition extraction are executed in <strong>sequential phases</strong>, restricting active edges to the current phase:</p>
-     <ol>
-      <li><strong>Phase 1:</strong> Segment &rarr; Unicode codepoint &amp; Feature edges + Unicode decomposition/composition</li>
-      <li><strong>Phase 2:</strong> <code>cmap</code> nominal glyph mappings &amp; <code>cmap 14</code> UVS edges</li>
-      <li><strong>Phase 3:</strong> <code>GSUB</code> layout substitution lookups &amp; <code>MATH</code> / <code>COLR</code> tables</li>
-      <li><strong>Phase 4:</strong> <code>glyf</code> composite glyph component edges</li>
+     <ol class="compact">
+      <li>Segment &rarr; Codepoint/Feature + Unicode closure</li>
+      <li><code>cmap</code> nominal &amp; <code>cmap 14</code> UVS</li>
+      <li><code>GSUB</code> lookups &amp; <code>MATH</code> / <code>COLR</code></li>
+      <li><code>glyf</code> composite components</li>
      </ol>
-     <p class="note">Why phase? A <code>glyf</code> composite component glyph does not trigger <code>GSUB</code> substitutions on its own—phasing prevents false transitive dependencies!</p>
+     <p class="note">Prevents <code>glyf</code> components from falsely triggering <code>GSUB</code>.</p>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>A critical subtlety of OpenType subsetting is that HarfBuzz's glyph closure is phased: for example, composite glyphs in the <code>glyf</code> table pull in their component glyphs *after* <code>GSUB</code> substitutions have finished, so a component glyph pulled in by a composite won't itself trigger new <code>GSUB</code> rules. Our dependency graph mirrors this exact phasing during both graph traversal and condition extraction.</p>
+   <p>A critical subtlety of OpenType subsetting is that HarfBuzz's glyph closure is phased: composite glyphs in the <code>glyf</code> table pull in their component glyphs *after* <code>GSUB</code> substitutions have finished, so a component glyph pulled in by a composite won't itself trigger new <code>GSUB</code> rules. Our dependency graph mirrors this exact phasing.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 20: CONDITION EXTRACTION VIA TARJAN'S SCC ALGORITHM
   ===================================================================== -->
   <section class="slide" id="condition-extraction-algorithm">
-   <h2>Dependency Graph Condition Extraction Algorithm</h2>
-   <p>Implemented in <code>dependency_closure.cc</code> (<code>docs/dependency_graph_condition_extract.md</code>). Run sequentially for each closure phase:</p>
-   <ol>
-    <li><strong>Initialize Node Conditions:</strong>
-     <ul>
-      <li>All nodes in the Initial Font (<var>s</var><sub>0</sub>) &rarr; <code>True</code></li>
-      <li>Each Segment node <var>s</var><sub><var>i</var></sub> &rarr; <code>ActivationCondition::exclusive_segment(s_i)</code></li>
-      <li>All other nodes &rarr; <code>unmapped</code> (retain conditions accumulated from earlier phases).</li>
-     </ul>
-    </li>
-    <li><strong>Precompute Incoming Edges:</strong> Collect active incoming edges (<var>p</var><sub>1</sub>, &hellip;, <var>p</var><sub><var>k</var></sub>) &rarr; <var>v</var> for the current phase.</li>
-    <li><strong>Find Strongly Connected Components (SCCs):</strong> Run <strong>Tarjan's SCC algorithm</strong>, which partitions the phase subgraph into SCCs and emits them in <strong>topological order</strong>.</li>
-    <li><strong>Propagate Conditions in Topological Order:</strong>
-     <ul>
-      <li><strong>Single-Node SCC (|<var>C</var>| = 1):</strong> For each incoming edge, join parent conditions via <code>ActivationCondition::And(...)</code>, then join all incoming edges into node <var>v</var>'s condition via <code>ActivationCondition::Or(...)</code> and normalize to CNF.</li>
-      <li><strong>Multi-Node SCC (|<var>C</var>| &gt; 1, cyclic <code>GSUB</code> rules):</strong> Iterate through nodes in the component, propagating <code>And</code>/<code>Or</code> conditions repeatedly until a <strong>fixed point</strong> is reached (no node conditions change).</li>
+   <h2>Condition Extraction via Tarjan's SCC</h2>
+   <ol class="compact">
+    <li><strong>Initialize:</strong> <var>s</var><sub>0</sub> nodes &rarr; <code>True</code>; Segment nodes <var>s</var><sub><var>i</var></sub> &rarr; <code>exclusive(s_i)</code>.</li>
+    <li><strong>Find SCCs:</strong> Run <strong>Tarjan's SCC algorithm</strong> on the active phase subgraph to emit components in <strong>topological order</strong>.</li>
+    <li><strong>Propagate Conditions:</strong>
+     <ul class="compact">
+      <li><strong>Single-Node SCC (|<var>C</var>| = 1):</strong> Join edge contexts via <code>And()</code>, join incoming edges via <code>Or()</code>, and normalize to CNF.</li>
+      <li><strong>Multi-Node SCC (|<var>C</var>| &gt; 1, cyclic <code>GSUB</code>):</strong> Iterate <code>And</code>/<code>Or</code> propagation around the cycle until reaching a <strong>fixed point</strong>.</li>
      </ul>
     </li>
    </ol>
   </section>
 
   <section class="comment">
-   <p>How do we turn the dependency graph into boolean activation conditions for every glyph? Within each closure phase, we run Tarjan's Strongly Connected Components algorithm. Tarjan's algorithm gives us the SCCs in topological order. For any single-node SCC, we simply compute its condition once by joining its parents' conditions—using <code>And</code> across conjunctive edge contexts and <code>Or</code> across distinct incoming edges. If a font has cycles in its <code>GSUB</code> rules (a multi-node SCC), we iterate around the SCC until the boolean conditions reach a fixed point.</p>
+   <p>Within each closure phase, we run Tarjan's Strongly Connected Components algorithm, which emits SCCs in topological order. For single-node SCCs, we compute its condition once by joining its parents' conditions. If a font has cycles in its <code>GSUB</code> rules (a multi-node SCC), we iterate around the SCC until the boolean conditions reach a fixed point.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 21: ACTIVATION CONDITION NORMALIZATION (CNF)
   ===================================================================== -->
   <section class="slide" id="condition-normalization">
-   <h2>Condition Representation &amp; Normalization</h2>
-   <p><code>ActivationCondition</code> (<code>activation_condition.h</code>) stores every condition in canonical <strong>Monotonic Conjunctive Normal Form (CNF)</strong>—a sorted vector of disjunctive <code>SegmentSet</code> clauses:</p>
-   <p><var>C</var> &nbsp;=&nbsp; <span title="Clause C1">(<var>s</var><sub>1,1</sub> &or; <var>s</var><sub>1,2</sub> &or; &hellip;)<sub>Clause <var>C</var><sub>1</sub></sub></span> &nbsp;&and;&nbsp; <span title="Clause C2">(<var>s</var><sub>2,1</sub> &or; <var>s</var><sub>2,2</sub> &or; &hellip;)<sub>Clause <var>C</var><sub>2</sub></sub></span> &nbsp;&and;&nbsp; &hellip;</p>
+   <h2>CNF Condition Normalization</h2>
+   <p>Canonical <strong>Monotonic CNF</strong>: &nbsp;<strong><var>C</var> = (<var>s</var><sub>1,1</sub> &or; <var>s</var><sub>1,2</sub> &or; &hellip;) &and; (<var>s</var><sub>2,1</sub> &or; <var>s</var><sub>2,2</sub> &or; &hellip;) &and; &hellip;</strong></p>
    <div class="columns">
     <section>
-     <h3>Subsumption Simplification (Simplify)</h3>
-     <ul>
-      <li>Sorts clauses by cardinality (|<var>C</var><sub><var>i</var></sub>| ascending), then removes any clause <var>C</var><sub><var>j</var></sub> that is a superset of an earlier clause <var>C</var><sub><var>i</var></sub> &sube; <var>C</var><sub><var>j</var></sub>:
-       (<var>s</var><sub>1</sub>) &and; (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &nbsp;&rArr;&nbsp; (<var>s</var><sub>1</sub>)</li>
-      <li>Final lexicographical sort guarantees a unique canonical representation for hashing &amp; equality (`ConditionsAndGlyphs` map).</li>
+     <h3>Clause Subsumption</h3>
+     <ul class="compact">
+      <li>Drops any clause <var>C</var><sub><var>j</var></sub> where <var>C</var><sub><var>i</var></sub> &sube; <var>C</var><sub><var>j</var></sub>:
+       <br>(<var>s</var><sub>1</sub>) &and; (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &nbsp;&rArr;&nbsp; (<var>s</var><sub>1</sub>)</li>
+      <li>Sorted for canonical hashing &amp; equality.</li>
      </ul>
     </section>
     <section>
-     <h3>Fast And, Or &amp; Superset Reduction</h3>
-     <ul>
-      <li><strong><code>And(A, B)</code>:</strong> Concatenates clauses of <var>A</var> and <var>B</var>, then runs <code>Simplify()</code>.</li>
-      <li><strong><code>Or(A, B)</code> Optimization:</strong> Before taking the Cartesian cross-product of clauses, extracts identical clauses <var>I</var> shared by <var>A</var> and <var>B</var> in one linear scan:
-       (<var>I</var> &and; <var>A&prime;</var>) &or; (<var>I</var> &and; <var>B&prime;</var>) &nbsp;=&nbsp; <var>I</var> &and; (<var>A&prime;</var> &or; <var>B&prime;</var>)</li>
-      <li><strong><code>NonCompositeSuperset()</code>:</strong> Drops composite clauses to keep either all unit conjunctive clauses (<var>s</var><sub><var>i</var></sub> &and; <var>s</var><sub><var>j</var></sub>) or the single lowest-probability disjunctive clause.</li>
+     <h3>Fast Or() &amp; Superset</h3>
+     <ul class="compact">
+      <li><strong><code>Or(A, B)</code> Factoring:</strong> Extracts shared clauses <var>I</var> before cross-multiplying:
+       <br>(<var>I</var> &and; <var>A&prime;</var>) &or; (<var>I</var> &and; <var>B&prime;</var>) = <var>I</var> &and; (<var>A&prime;</var> &or; <var>B&prime;</var>)</li>
+      <li><strong><code>NonCompositeSuperset()</code>:</strong> Reduces to pure AND or OR.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Because thousands of conditions are combined and compared during segmentation, keeping boolean expressions normalized is critical. We represent every <code>ActivationCondition</code> in monotonic Conjunctive Normal Form (CNF) and simplify via clause subsumption: if clause <var>A</var> is a subset of clause <var>B</var>, <var>B</var> is redundant and dropped. When computing <code>Or(A, B)</code>, we avoid exponential blowup by factoring out identical clauses shared between <var>A</var> and <var>B</var> in a single linear pass before taking the cross product of the remaining clauses.</p>
+   <p>We represent every <code>ActivationCondition</code> in monotonic Conjunctive Normal Form (CNF) and simplify via clause subsumption: if clause <var>A</var> is a subset of clause <var>B</var>, <var>B</var> is redundant and dropped. When computing <code>Or(A, B)</code>, we avoid exponential blowup by factoring out identical clauses shared between <var>A</var> and <var>B</var> in a single linear pass before taking the cross product of the remaining clauses.</p>
   </section>
 
   <!-- ====================================================================
@@ -829,29 +619,25 @@
   <section class="slide two-panes" id="why-merge">
    <div>
     <h2>Why Merge Segments &amp; Patches?</h2>
-    <p>Starting with one segment per codepoint yields hundreds or thousands of tiny glyph patches.</p>
-    <p>Merging combines segments or patches to balance two competing forces:</p>
+    <p>1 segment per codepoint yields thousands of tiny patches.</p>
     <ul>
      <li><strong>Per-Patch Overhead (<var>k</var>)</strong> vs.</li>
-     <li><strong>Unneeded Glyph Transfer ("Over-fetching")</strong></li>
+     <li><strong>Over-Fetching Unneeded Glyphs</strong></li>
     </ul>
    </div>
    <div>
-    <h3>Benefits of Careful Merging</h3>
-    <ul>
-     <li><strong>Reduces HTTP Request Overhead:</strong> Fewer patch fetches per page view.</li>
-     <li><strong>Improves Brotli Compression:</strong> Glyphs within a script share contour patterns and deltas; compressing them together in one patch yields much higher compression ratios.</li>
-     <li><strong>Shrinks Patch Map Tables:</strong> Fewer conditions and entries in the initial font's <code>IFT </code> / <code>IFTX</code> tables.</li>
-    </ul>
-    <h3>Risk of Bad Merging</h3>
-    <ul>
-     <li>Merging a rare character into a high-frequency character forces clients to download the rare glyph on almost every page view!</li>
+    <h3>Pros vs. Cons</h3>
+    <ul class="compact">
+     <li><strong>Fewer Requests:</strong> Saves HTTP/framing overhead.</li>
+     <li><strong>Better Brotli:</strong> Shared outline patterns compress together.</li>
+     <li><strong>Smaller Patch Maps:</strong> Fewer <code>IFT </code>/<code>IFTX</code> entries.</li>
+     <li><strong>Risk:</strong> Merging rare + common glyphs wastes bandwidth!</li>
     </ul>
    </div>
   </section>
 
   <section class="comment">
-   <p>Why do we need a cost-based merger? If we leave one segment per codepoint, the client pays a per-request network overhead on every patch and loses cross-glyph Brotli compression dictionary synergy. On the other hand, if we merge a rare character with a common character like 'e', every user downloads the rare glyph unnecessarily. We need a quantitative objective function to evaluate every candidate merge.</p>
+   <p>If we leave one segment per codepoint, the client pays a per-request network overhead on every patch and loses cross-glyph Brotli compression synergy. On the other hand, merging a rare character with a common character like 'e' forces every user to download the rare glyph. We need a quantitative objective function to evaluate candidate merges.</p>
   </section>
 
   <!-- ====================================================================
@@ -859,57 +645,47 @@
   ===================================================================== -->
   <section class="slide" id="cost-function">
    <h2>The Segmentation Cost Function</h2>
-   <p>We quantify the performance of a candidate glyph segmentation <var>S</var> = {<var>p</var><sub>1</sub>, &hellip;, <var>p</var><sub><var>n</var></sub>} by the <strong>expected number of bytes transferred for a random page view</strong> (<code>docs/segmenter.md</code>):</p>
-   <p>cost(<var>S</var>) &nbsp;=&nbsp; size(<var>F</var><sub>init</sub>) &nbsp;+&nbsp; &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</p>
-   <div class="columns">
-    <section>
-     <h3><var>P</var>(<var>c</var><sub><var>i</var></sub>) &isin; [0, 1]</h3>
-     <p>Probability that patch <var>p</var><sub><var>i</var></sub>'s activation condition <var>c</var><sub><var>i</var></sub> is satisfied on a random web page (estimated from codepoint unigram or bigram frequencies).</p>
-    </section>
-    <section>
-     <h3>size(<var>p</var><sub><var>i</var></sub>) (bytes)</h3>
-     <p>Size of glyph-keyed patch <var>p</var><sub><var>i</var></sub> <strong>after Brotli compression</strong>. Using real Brotli compression captures cross-glyph outline redundancy!</p>
-    </section>
-    <section>
-     <h3><var>k</var> (bytes)</h3>
-     <p>Fixed network &amp; format overhead per patch request (configurable via <code>network_overhead_cost</code>; default <strong>200 bytes</strong> in auto-config).</p>
-    </section>
-   </div>
+   <p>Expected bytes transferred for a random page view:</p>
+   <p><strong>cost(<var>S</var>) &nbsp;=&nbsp; size(<var>F</var><sub>init</sub>) &nbsp;+&nbsp; &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <ul>
+    <li><strong><var>P</var>(<var>c</var><sub><var>i</var></sub>) &isin; [0, 1]:</strong> Probability condition <var>c</var><sub><var>i</var></sub> is triggered on a random page.</li>
+    <li><strong>size(<var>p</var><sub><var>i</var></sub>):</strong> Brotli-compressed byte size of patch <var>p</var><sub><var>i</var></sub> (captures outline synergy).</li>
+    <li><strong><var>k</var> = 200 bytes:</strong> Fixed network overhead per patch request.</li>
+   </ul>
   </section>
 
   <section class="comment">
-   <p>Our cost function is simple and physically grounded: the expected number of bytes transferred per page view. Each patch <var>p</var><sub><var>i</var></sub> contributes its activation probability <var>P</var>(<var>c</var><sub><var>i</var></sub>) multiplied by its Brotli-compressed byte size plus a fixed per-request network overhead <var>k</var> (set to 200 bytes based on measurements from the IFT demo). Crucially, computing size(<var>p</var><sub><var>i</var></sub>) with actual Brotli compression lets the merger discover pairs of glyphs whose outlines compress well together.</p>
+   <p>Our cost function is the expected number of bytes transferred per page view. Each patch <var>p</var><sub><var>i</var></sub> contributes its activation probability <var>P</var>(<var>c</var><sub><var>i</var></sub>) multiplied by its Brotli-compressed byte size plus a fixed per-request network overhead <var>k</var> (200 bytes by default).</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 25: ASSESSING COST DELTAS
   ===================================================================== -->
   <section class="slide" id="cost-deltas">
-   <h2>Assessing Candidate Merges via Cost Deltas (&Delta;cost)</h2>
-   <p>Because each patch contributes independently to cost(<var>S</var>), evaluating a candidate merge only requires inspecting the <strong>localized subset of patches affected by the merge</strong> (<code>candidate_merge.cc</code>):</p>
-   <p>&Delta;cost &nbsp;=&nbsp; &sum;<sub><var>p</var> &isin; Added &cup; Modified</sub> <var>P</var>(<var>c&prime;</var><sub><var>p</var></sub>) &middot; (size(<var>p&prime;</var>) + <var>k</var>) &nbsp;&minus;&nbsp; &sum;<sub><var>p</var> &isin; Removed &cup; Modified</sub> <var>P</var>(<var>c</var><sub><var>p</var></sub>) &middot; (size(<var>p</var>) + <var>k</var>)</p>
+   <h2>Assessing Candidate Merges (&Delta;cost)</h2>
+   <p><strong>&Delta;cost &nbsp;=&nbsp; &sum;<sub><var>p</var> &isin; Added &cup; Mod</sub> <var>P</var>(<var>c&prime;</var><sub><var>p</var></sub>)(size(<var>p&prime;</var>) + <var>k</var>) &nbsp;&minus;&nbsp; &sum;<sub><var>p</var> &isin; Removed &cup; Mod</sub> <var>P</var>(<var>c</var><sub><var>p</var></sub>)(size(<var>p</var>) + <var>k</var>)</strong></p>
    <div class="columns">
     <section>
-     <h3>Effects of a Candidate Merge</h3>
-     <ol>
-      <li><strong>Remove or add patches:</strong> e.g., two exclusive patches merge into one combined patch.</li>
-      <li><strong>Modify glyphs in existing patches:</strong> e.g., interaction glyphs move from a conditional patch into the merged exclusive patch.</li>
-      <li><strong>Modify activation conditions:</strong> e.g., replacing merged segment IDs in downstream CNF clauses.</li>
-     </ol>
+     <h3>Localized Effects</h3>
+     <ul class="compact">
+      <li>Combines exclusive patches.</li>
+      <li>Moves interaction glyphs between patches.</li>
+      <li>Updates segment IDs in CNF clauses.</li>
+     </ul>
     </section>
     <section>
      <h3>Greedy Merge Loop</h3>
-     <ul>
-      <li>Use the inverted index (<code>TriggeringSegmentToConditions</code>) to locate all patches whose conditions reference the candidate segments.</li>
-      <li>Compute &Delta;cost for candidate pairs in the Merge Group.</li>
-      <li>Select the pair with the <strong>lowest (most negative) &Delta;cost &lt; 0</strong>, apply the merge, and repeat until no negative-cost merges remain.</li>
+     <ul class="compact">
+      <li>Find touched patches via inverted index.</li>
+      <li>Pick pair with <strong>lowest &Delta;cost &lt; 0</strong>.</li>
+      <li>Repeat until no &Delta;cost &lt; 0 remains.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Because the total cost is a sum over independent patches, we never recompute the cost of the entire font to test a candidate merge. Instead, we use an inverted index from triggering segments to conditions to find only the patches touched by the merge, subtract their old cost contribution, and add back the new cost contribution. That difference is the <code>cost delta</code> (&Delta;cost). Any merge with &Delta;cost &lt; 0 reduces expected network transfer.</p>
+   <p>Because total cost is a sum over independent patches, we use an inverted index (<code>TriggeringSegmentToConditions</code>) to find only the patches touched by a candidate merge, subtract their old cost contribution, and add back their new cost contribution. Any merge with &Delta;cost &lt; 0 reduces expected network transfer.</p>
   </section>
 
   <!-- ====================================================================
@@ -917,120 +693,115 @@
   ===================================================================== -->
   <section class="slide" id="segment-vs-patch-merging">
    <h2>Segment Merging vs. Patch Merging</h2>
-   <p>The merger supports two distinct merge operations with different closure behaviors:</p>
    <div class="columns">
     <section>
      <h3>1. Segment Merge (<var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>)</h3>
-     <p>Unions the codepoints/features of two input segments and updates glyph conditions across the dependency graph:</p>
-     <ul>
-      <li><strong>Example (<code>{f}</code>, <code>{i}</code>, and ligature <code>{fi}</code>):</strong>
-       <br>Merging segments <code>{f}</code> and <code>{i}</code> into <code>{f, i}</code> collapses <strong>all three patches</strong> (<code>{f}</code>, <code>{i}</code>, and <code>{fi}</code>) into a single exclusive patch <code>{f, i, fi}</code>!</li>
-      <li>Ideal for merging exclusive patches and resolving conjunctive ligature/composite patches into their parent segments.</li>
+     <ul class="compact">
+      <li>Unions input segments and updates dependency conditions.</li>
+      <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Collapses <code>{f}</code>, <code>{i}</code>, <code>{fi}</code> into one exclusive patch <code>{f, i, fi}</code>!</li>
+      <li>Best for exclusive patches &amp; folding ligatures.</li>
      </ul>
     </section>
     <section>
      <h3>2. Patch Merge (<var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub>)</h3>
-     <p>Directly combines two specific glyph patches without modifying input segment definitions (<code>experimental_use_patch_merges</code>):</p>
-     <ul>
-      <li>New patch has glyphs Glyphs(<var>p</var><sub>1</sub>) &cup; Glyphs(<var>p</var><sub>2</sub>) and condition <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
-      <li><strong>Example:</strong> Merging patch <code>{f}</code> and patch <code>{i}</code> via a Patch Merge creates <code>{f, i}</code> with condition <code>(f OR i)</code>, while leaving the <code>{fi}</code> patch (<code>f AND i</code>) untouched!</li>
-      <li>Ideal for combining non-exclusive (conjunctive/disjunctive) patches where a full Segment Merge would pull in too many unrelated closure glyphs.</li>
+     <ul class="compact">
+      <li>Directly unions two patches with condition <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
+      <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Forms <code>{f, i}</code> under <code>(f OR i)</code>; leaves <code>{fi}</code> untouched!</li>
+      <li>Best for non-exclusive patches.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>We distinguish between two types of merges: a Segment Merge and a Patch Merge. A Segment Merge unions the underlying Unicode segments <var>s</var><sub><var>a</var></sub> and <var>s</var><sub><var>b</var></sub>, which automatically folds any conjunctive interaction glyphs like <code>fi</code> into the merged patch. A Patch Merge, on the other hand, leaves the input segments alone and directly unions two specific glyph patches while OR-ing their activation conditions. Patch merges are particularly effective for non-exclusive patches where merging the underlying segments would pull in too many unrelated glyphs via closure.</p>
+   <p>A Segment Merge unions the underlying Unicode segments <var>s</var><sub><var>a</var></sub> and <var>s</var><sub><var>b</var></sub>, which automatically folds conjunctive interaction glyphs like <code>fi</code> into the merged patch. A Patch Merge leaves the input segments alone and directly unions two glyph patches while OR-ing their activation conditions.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 27: INITIAL FONT MERGING
   ===================================================================== -->
   <section class="slide" id="initial-font-merging">
-   <h2>Initial Font Merging &amp; Fallback Glyphs</h2>
-   <p>Before general pairwise merging, <code>Merger::MoveSegmentsToInitFont</code> checks which high-frequency segments belong in the <strong>Initial Font (<var>s</var><sub>0</sub>)</strong>:</p>
+   <h2>Initial Font Merging (<var>s</var><sub>0</sub>)</h2>
    <div class="columns">
     <section>
      <h3>Why Move Glyphs to <var>s</var><sub>0</sub>?</h3>
-     <ul>
-      <li>For glyphs needed with near-100% probability (e.g., core Latin lowercase letters in an English font), loading them conditionally in a patch wastes network overhead <var>k</var>, patch headers, and a client round trip.</li>
-      <li>Moving a segment <var>s</var><sub><var>i</var></sub> into <var>s</var><sub>0</sub> also <strong>simplifies downstream conditions</strong> (conjunctive edges depending on <var>s</var><sub><var>i</var></sub> become disjunctive or exclusive!).</li>
+     <ul class="compact">
+      <li>Near-100% probability glyphs waste patch overhead <var>k</var> and a round trip.</li>
+      <li>Moving <var>s</var><sub><var>i</var></sub> into <var>s</var><sub>0</sub> simplifies downstream conjunctive conditions.</li>
      </ul>
     </section>
     <section>
-     <h3>Initial Font &Delta;cost &amp; Thresholds</h3>
-     <ul>
-      <li>Prunes segments below <code>initial_font_merge_probability_threshold</code> (25%–60% depending on Quality Level).</li>
-      <li>Computes &Delta;cost<sub>init</sub>, adding the WOFF2 size increase &Delta;size(<var>F</var><sub>init</sub>) and subtracting eliminated patch costs.</li>
-      <li>Accepts the move if &Delta;cost<sub>init</sub> &lt; threshold (default &minus;0.8 &times; <var>k</var> = &minus;160 bytes).</li>
-      <li><strong>Unmapped / Fallback Glyphs:</strong> Any glyphs whose conditions cannot be isolated are moved into <var>s</var><sub>0</sub> by default (<code>MOVE_TO_INIT_FONT</code>).</li>
+     <h3>Threshold &amp; Fallback</h3>
+     <ul class="compact">
+      <li>Tests segments above probability cutoff (25%–60%).</li>
+      <li>Accepts move if &Delta;cost<sub>init</sub> &lt; &minus;0.8<var>k</var> (&minus;160 B).</li>
+      <li>Unmapped/fallback glyphs default to <var>s</var><sub>0</sub>.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Before running pairwise patch merging, we run Initial Font Merging. If a character occurs on nearly 100% of web pages in the primary script, keeping it in a separate patch just adds header and request overhead. We evaluate segments above the probability threshold by measuring how much the initial WOFF2 font grows versus how much expected patch transfer cost is eliminated. If the net cost savings exceeds 80% of a network request (-160 bytes), we move the segment directly into the initial font.</p>
+   <p>Before running pairwise patch merging, <code>Merger::MoveSegmentsToInitFont</code> evaluates segments above the probability threshold by comparing the initial WOFF2 font growth against eliminated patch transfer costs. If the net savings exceeds 80% of a network request (-160 bytes), the segment moves into the initial font.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 28: PROBABILITY ESTIMATION - UNIGRAMS VS BIGRAMS
   ===================================================================== -->
   <section class="slide" id="probability-estimation">
-   <h2>Estimating Activation Condition Probabilities</h2>
-   <p>To evaluate cost(<var>S</var>), <code>ProbabilityCalculator</code> estimates <var>P</var>(<var>c</var><sub><var>i</var></sub>) from web corpus frequency data in <code>w3c/ift-encoder-data</code> (stored as sorted Riegeli records of <code>CodepointCount</code>):</p>
+   <h2>Estimating Condition Probabilities</h2>
    <div class="columns">
     <section>
-     <h3>1. Frequency Unigrams (use_bigrams = false)</h3>
-     <p><em>Quality 1–2</em> Uses only single-codepoint probabilities <var>P</var>(<var>a</var>), assuming all codepoints occur <strong>independently</strong>:</p>
-     <ul>
-      <li><strong>Disjunction:</strong> <var>P</var>(<var>a</var><sub>1</sub> &or; &hellip; &or; <var>a</var><sub><var>k</var></sub>) = 1 &minus; &prod;<sub><var>i</var>=1..<var>k</var></sub> (1 &minus; <var>P</var>(<var>a</var><sub><var>i</var></sub>))</li>
-      <li><strong>Conjunction:</strong> <var>P</var>(<var>S</var><sub>1</sub> &and; &hellip; &and; <var>S</var><sub><var>m</var></sub>) = &prod;<sub><var>j</var>=1..<var>m</var></sub> <var>P</var>(<var>S</var><sub><var>j</var></sub>)</li>
-      <li><strong>Pros:</strong> Very fast O(<var>k</var>) evaluation; tiny 1.5 MB dataset.</li>
-      <li><strong>Cons:</strong> Independence is false on real text—characters in a script co-occur, so unigrams systematically overestimate union probabilities <var>P</var>(<var>a</var> &cup; <var>b</var>).</li>
+     <h3>1. Unigrams (Quality 1–2)</h3>
+     <ul class="compact">
+      <li>Single-codepoint <var>P</var>(<var>a</var>); assumes <strong>independence</strong>:
+       <br><var>P</var>(&or; <var>a</var><sub><var>i</var></sub>) = 1 &minus; &prod; (1 &minus; <var>P</var>(<var>a</var><sub><var>i</var></sub>))</li>
+      <li><strong>Pros:</strong> Fast O(<var>k</var>); 1.5 MB dataset.</li>
+      <li><strong>Cons:</strong> Overestimates unions <var>P</var>(<var>a</var> &cup; <var>b</var>) on correlated text.</li>
      </ul>
     </section>
     <section>
-     <h3>2. Frequency Bigrams (use_bigrams = true)</h3>
-     <p><em>Quality 3–7</em> Uses empirical pairwise co-occurrence probabilities <var>P</var>(<var>a</var> &cap; <var>b</var>) (probability a page contains both <var>a</var> and <var>b</var>):</p>
-     <ul>
-      <li><strong>No Independence Assumption:</strong> Captures real-world character correlation (e.g., <code>q</code> and <code>u</code>, or common Kanji pairs).</li>
-      <li>Because we have 1st- and 2nd-order marginals (<var>P</var>(<var>a</var>) and <var>P</var>(<var>a</var> &cap; <var>b</var>)) but not <var>k</var>-way joint distributions, exact probabilities for <var>k</var> &ge; 3 are underdetermined.</li>
-      <li>Instead, we compute rigorous <strong>Probability Bounds [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>]</strong>!</li>
+     <h3>2. Bigrams (Quality 3–7)</h3>
+     <ul class="compact">
+      <li>Pairwise co-occurrence <var>P</var>(<var>a</var> &cap; <var>b</var>) (696 MB dataset).</li>
+      <li><strong>Captures correlation</strong> (e.g., <code>q</code>+<code>u</code>, Kanji pairs).</li>
+      <li>Computes tight <strong>Bounds [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>]</strong> for <var>k</var> &ge; 3!</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>How do we compute <var>P</var>(<var>c</var><sub><var>i</var></sub>) for a boolean condition over codepoints? We have two modes. Unigram mode uses only individual codepoint probabilities and assumes statistical independence—which is fast, but overestimates the probability of unions because characters on web pages are correlated. Bigram mode, used in Quality 3 through 7, uses pairwise co-occurrence counts <var>P</var>(<var>a</var> &cap; <var>b</var>) from our 696 MB Riegeli dataset to compute rigorous upper and lower probability bounds without assuming independence.</p>
+   <p>Unigram mode uses individual codepoint probabilities and assumes statistical independence—which is fast, but overestimates union probabilities because characters on web pages co-occur. Bigram mode (Q3–Q7) uses pairwise co-occurrence counts <var>P</var>(<var>a</var> &cap; <var>b</var>) to compute rigorous upper and lower probability bounds without assuming independence.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 29: BIGRAM PROBABILITY BOUNDS (DAWSON-SANKOFF & FRECHET)
   ===================================================================== -->
   <section class="slide" id="probability-bounds">
-   <h2>Bigram Probability Bounds: Unions &amp; Intersections</h2>
-   <p>Given <var>S</var><sub>1</sub> = &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>a</var><sub><var>i</var></sub>) and <var>S</var><sub>2</sub> = &sum;<sub>1&le;<var>i</var>&lt;<var>j</var>&le;<var>n</var></sub> <var>P</var>(<var>a</var><sub><var>i</var></sub> &cap; <var>a</var><sub><var>j</var></sub>) for a disjunctive clause <var>U</var> = &bigcup;<sub><var>i</var>=1..<var>n</var></sub> <var>a</var><sub><var>i</var></sub>:</p>
-     <h3>1. Disjunctive Clauses: Dawson–Sankoff / Kwerel (1975) Bounds</h3>
-    <p>From <em>"Bounds for the Probability of a Union, with Applications"</em> (Formulas 3 &amp; 4), let <var>k</var><sup>*</sup> = &lfloor;2<var>S</var><sub>2</sub> / <var>S</var><sub>1</sub>&rfloor; + 1:</p>
-    <ul>
-     <li><strong>Lower Bound (<var>P</var><sub>min</sub>, optimal degree-2 bound):</strong>
-      <var>P</var>(<var>U</var>) &nbsp;&ge;&nbsp; [ 2 / (<var>k</var><sup>*</sup> + 1) ] &middot; <var>S</var><sub>1</sub> &minus; [ 2 / (<var>k</var><sup>*</sup>(<var>k</var><sup>*</sup> + 1)) ] &middot; <var>S</var><sub>2</sub></li>
-     <li><strong>Upper Bound (<var>P</var><sub>max</sub>, Hunter–Worsley / Kwerel bound):</strong>
-      <var>P</var>(<var>U</var>) &nbsp;&le;&nbsp; min( 1.0, &nbsp;<var>S</var><sub>1</sub> &minus; (2 / <var>n</var>) &middot; <var>S</var><sub>2</sub> )</li>
-    </ul>
-     <h3>2. Conjunctive Clauses across Segments &amp; Point Selection</h3>
-    <ul>
-     <li>For conjunctions <var>C</var><sub>1</sub> &and; &hellip; &and; <var>C</var><sub><var>m</var></sub> across clauses, we apply the <strong>Fréchet inequalities</strong>:
-      max( 0, &nbsp;&sum;<sub><var>j</var>=1..<var>m</var></sub> <var>P</var><sub>min</sub>(<var>C</var><sub><var>j</var></sub>) &minus; (<var>m</var> &minus; 1) ) &nbsp;&le;&nbsp; <var>P</var>( &cap;<sub><var>j</var>=1..<var>m</var></sub> <var>C</var><sub><var>j</var></sub> ) &nbsp;&le;&nbsp; min<sub>1&le;<var>j</var>&le;<var>m</var></sub> <var>P</var><sub>max</sub>(<var>C</var><sub><var>j</var></sub>)</li>
-     <li><strong>Cost Evaluation Value:</strong> Uses the midpoint <var>P</var>(<var>c</var><sub><var>i</var></sub>) = &frac12; (<var>P</var><sub>min</sub>(<var>c</var><sub><var>i</var></sub>) + <var>P</var><sub>max</sub>(<var>c</var><sub><var>i</var></sub>)).</li>
-    </ul>
+   <h2>Bigram Probability Bounds</h2>
+   <p>Let <var>S</var><sub>1</sub> = &sum; <var>P</var>(<var>a</var><sub><var>i</var></sub>), &nbsp;<var>S</var><sub>2</sub> = &sum;<sub><var>i</var>&lt;<var>j</var></sub> <var>P</var>(<var>a</var><sub><var>i</var></sub> &cap; <var>a</var><sub><var>j</var></sub>), and <var>k</var><sup>*</sup> = &lfloor;2<var>S</var><sub>2</sub> / <var>S</var><sub>1</sub>&rfloor; + 1:</p>
+   <div class="columns">
+    <section>
+     <h3>1. Unions (Dawson–Sankoff)</h3>
+     <ul class="compact">
+      <li><strong>Lower (<var>P</var><sub>min</sub>):</strong><br>[2/(<var>k</var><sup>*</sup>+1)] <var>S</var><sub>1</sub> &minus; [2/(<var>k</var><sup>*</sup>(<var>k</var><sup>*</sup>+1))] <var>S</var><sub>2</sub></li>
+      <li><strong>Upper (<var>P</var><sub>max</sub>):</strong><br>min(1.0, &nbsp;<var>S</var><sub>1</sub> &minus; (2/<var>n</var>) <var>S</var><sub>2</sub>)</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Intersections (Fréchet)</h3>
+     <ul class="compact">
+      <li><strong>Lower:</strong> max(0, &sum; <var>P</var><sub>min</sub>(<var>C</var><sub><var>j</var></sub>) &minus; (<var>m</var>&minus;1))</li>
+      <li><strong>Upper:</strong> min<sub><var>j</var></sub> <var>P</var><sub>max</sub>(<var>C</var><sub><var>j</var></sub>)</li>
+      <li><strong>Midpoint:</strong> <var>P</var>(<var>c</var><sub><var>i</var></sub>) = &frac12;(<var>P</var><sub>min</sub> + <var>P</var><sub>max</sub>)</li>
+     </ul>
+    </section>
+   </div>
   </section>
 
   <section class="comment">
-   <p>Specifically, for a union of codepoints <var>a</var><sub>1</sub> &cup; &hellip; &cup; <var>a</var><sub><var>n</var></sub>, we compute the sum of single probabilities <var>S</var><sub>1</sub> and the sum of pairwise probabilities <var>S</var><sub>2</sub>, and plug them into Formulas 3 and 4 from Kwerel (1975) / Dawson–Sankoff, which give the provably tightest possible lower and upper bounds using degree-2 marginals. For conjunctions across clauses, we use the classic Fréchet bounds, and then take the midpoint of [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>] when evaluating the cost function.</p>
+   <p>For a union of codepoints, we compute the sum of single probabilities <var>S</var><sub>1</sub> and pairwise probabilities <var>S</var><sub>2</sub>, and plug them into Formulas 3 and 4 from Kwerel (1975) / Dawson–Sankoff, which give the provably tightest lower and upper bounds using degree-2 marginals. For conjunctions across clauses, we use Fréchet bounds and take the midpoint.</p>
   </section>
 
   <!-- ====================================================================
@@ -1038,74 +809,67 @@
   ===================================================================== -->
   <section class="slide" id="multi-script-isolation">
    <h2>Multi-Script Fonts &amp; Merge Group Isolation</h2>
-   <p>When a font supports multiple writing scripts or languages, two fundamental challenges arise (<code>docs/segmenter.md</code>):</p>
    <div class="columns">
     <section>
-     <h3>The Multi-Script Challenges</h3>
-     <ol>
-      <li><strong>Missing Cross-Script Bigrams:</strong> Frequency data is collected per script/language; we don't have bigram pair counts between e.g. 1 Latin and 1 Cyrillic codepoint.</li>
-      <li><strong>Conflicting Frequencies on Shared Codepoints:</strong> Under Han unification, Simplified Chinese, Traditional Chinese, Japanese, and Korean share thousands of CJK ideographs that occur with vastly different frequencies in each language.</li>
-     </ol>
+     <h3>Challenges</h3>
+     <ul class="compact">
+      <li><strong>No Cross-Script Bigrams:</strong> Pair counts are collected per script.</li>
+      <li><strong>Shared Codepoints:</strong> CJK languages share Han ideographs at different frequencies.</li>
+     </ul>
     </section>
     <section>
-     <h3>Design Principle &amp; Isolation</h3>
-     <ul>
-      <li><strong>Equal Importance Principle:</strong> We do <em>not</em> normalize by global web language prevalence (which would optimize for high-traffic languages at the expense of minority scripts).</li>
-      <li><strong>Merge Group Isolation:</strong> Disjoint scripts are partitioned into isolated <code>MergeGroup</code>s:
-       <ul>
-        <li>Avoids cross-script merges where pair probabilities are unknown.</li>
-        <li>Bounds the quadratic O(<var>n</var><sup>2</sup>) candidate search space to within each individual merge group!</li>
-       </ul>
-      </li>
+     <h3>Design Principles</h3>
+     <ul class="compact">
+      <li><strong>Equal Script Weighting:</strong> Every script weighted equally (no global traffic bias).</li>
+      <li><strong>Isolated Merge Groups:</strong> Disjoint scripts merge independently, bounding O(<var>n</var><sup>2</sup>) search.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>When encoding a multi-script font, we face two challenges: missing cross-script bigram probabilities for disjoint scripts like Latin and Cyrillic, and conflicting probabilities for overlapping scripts like CJK. A key design principle of our encoder is that every supported script is treated with equal importance rather than weighting by global internet traffic. We isolate disjoint scripts into separate Merge Groups, which both prevents cross-script merges and shrinks the quadratic O(<var>n</var><sup>2</sup>) search space.</p>
+   <p>When encoding a multi-script font, every supported script is treated with equal importance rather than weighting by global internet traffic. We isolate disjoint scripts into separate Merge Groups, which both prevents cross-script merges and shrinks the quadratic O(<var>n</var><sup>2</sup>) search space.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 31: MULTI-DATASET COST FUNCTION & AGGREGATE PROBABILITY
   ===================================================================== -->
   <section class="slide" id="multi-dataset-cost">
-   <h2>Multi-Dataset Cost Function &amp; <var>P</var><sub>agg</sub> Optimization</h2>
-   <p>Within a single Merge Group configured with <var>M</var> frequency datasets (e.g., <var>M</var> = 4 for CJK), the total cost is the unweighted sum across all <var>M</var> datasets:</p>
-   <p>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> cost<sub><var>m</var></sub>(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</p>
-     <h3>Cost Delta Optimization: Factoring Out Patch Size</h3>
-    <p>When evaluating a candidate merge across <var>M</var> datasets, the compressed patch size size(<var>p</var><sub><var>i</var></sub>) and network overhead <var>k</var> are <strong>identical across all <var>M</var> datasets</strong>—only <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) varies! By linearity:</p>
-    <p>&sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &nbsp;=&nbsp; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &times; [ &sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) ]<sub><var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>)</sub></p>
-    <p>Computing the <strong>aggregate probability</strong> <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) = &sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) first and multiplying once by (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) eliminates <var>M</var>&times; redundant patch size lookups and inner delta loops!</p>
+   <h2>Multi-Dataset Cost &amp; <var>P</var><sub>agg</sub> Factoring</h2>
+   <p>Unweighted sum across <var>M</var> profiles in a group (e.g. <var>M</var> = 4 for CJK):</p>
+   <p><strong>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <h3>Linearity Optimization (<var>P</var><sub>agg</sub>)</h3>
+   <ul class="compact">
+    <li>size(<var>p</var><sub><var>i</var></sub>) and <var>k</var> are identical across all <var>M</var> datasets:
+     <br><strong>&sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &nbsp;=&nbsp; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &times; <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>)</strong></li>
+    <li>Summing <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) = &sum; <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) first avoids <var>M</var>&times; redundant patch size lookups!</li>
+   </ul>
   </section>
 
   <section class="comment">
-   <p>Inside a multi-script merge group like CJK—which has four frequency datasets—we define the group cost as the unweighted sum of the costs across all <var>M</var> datasets. Naively, evaluating every candidate merge against <var>M</var> datasets would multiply our inner loop work by <var>M</var>. However, notice that a patch's compressed size size(<var>p</var><sub><var>i</var></sub>) and network overhead <var>k</var> do not depend on the language dataset! By factoring (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) out of the sum, we simply sum the condition probabilities across the <var>M</var> calculators to get <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) and multiply by the patch size once.</p>
+   <p>Inside a multi-script merge group like CJK (<var>M</var> = 4), a patch's compressed size size(<var>p</var><sub><var>i</var></sub>) and network overhead <var>k</var> do not depend on the language dataset. By factoring (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) out of the sum, we sum the condition probabilities across the <var>M</var> calculators to get <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) and multiply by the patch size once.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 32: PRIORITIZING A PRIMARY SCRIPT & MERGE GROUP SPLITTING
   ===================================================================== -->
   <section class="slide" id="primary-script-priority">
-   <h2>Prioritizing a Primary Script &amp; Group Splitting</h2>
-   <p>When a font is deployed for a specific primary locale (e.g., <code>--auto_config_primary_script=Script_japanese</code>), the segmenter biases optimization in two ways:</p>
+   <h2>Prioritizing a Primary Script</h2>
    <div class="columns">
     <section>
-     <h3>1. Scoped Initial Font Merging</h3>
-     <ul>
-      <li>Infrequently used secondary scripts should <em>never</em> force their high-frequency characters into the Initial Font (<var>s</var><sub>0</sub>).</li>
-      <li><code>initial_font_merge_threshold</code> is configured <strong>per <code>FrequencyDataConfig</code> profile</strong>.</li>
-      <li>Only the primary script's profile opts into Initial Font Merging, evaluated solely against the primary script's probabilities.</li>
+     <h3>1. Scoped Initial Font</h3>
+     <ul class="compact">
+      <li>Only the primary script's profile sets <code>initial_font_merge_threshold</code>.</li>
+      <li>Secondary scripts never force glyphs into <var>s</var><sub>0</sub>.</li>
      </ul>
     </section>
     <section>
-     <h3>2. Overlapping Cluster Splitting</h3>
-     <ul>
-      <li>If Japanese were left in the unified 4-way CJK merge group, Han ideographs used in Japanese would be weighted equally across Chinese, Japanese, and Korean.</li>
-      <li>Instead, <code>AutoSegmenterConfig</code> splits the cluster into <strong>two disjoint merge groups</strong>:
-       <ol>
-        <li><strong>Primary Group (<code>Japanese</code>):</strong> Covers all font codepoints in <code>Script_japanese</code>, optimized 100% for Japanese.</li>
-        <li><strong>Secondary Group (<code>Hans+Hant+Korean</code>):</strong> Restricted to remaining CJK codepoints <em>not</em> in Japanese, optimized equally across the remaining 3 scripts.</li>
+     <h3>2. Cluster Splitting</h3>
+     <ul class="compact">
+      <li>Splits CJK into two disjoint groups:
+       <ol class="compact">
+        <li><strong>Primary (<code>Japanese</code>):</strong> 100% Japanese weights.</li>
+        <li><strong>Secondary (<code>Hans+Hant+Korean</code>):</strong> Remaining CJK codepoints.</li>
        </ol>
       </li>
      </ul>
@@ -1114,7 +878,7 @@
   </section>
 
   <section class="comment">
-   <p>What if a user explicitly specifies a primary script, like <code>Script_japanese</code> on a full CJK font? First, only the Japanese profile is allowed to move glyphs into the initial font. Second, instead of leaving Japanese in a single 4-way CJK merge group, <code>AutoSegmenterConfig</code> splits the CJK cluster into two disjoint groups: a primary group for all codepoints covered by Japanese (optimized 100% for Japanese frequencies), and a secondary group for the remaining CJK codepoints not used in Japanese (optimized with equal weight across Simplified Chinese, Traditional Chinese, and Korean).</p>
+   <p>When a user explicitly specifies a primary script like <code>Script_japanese</code> on a CJK font, only the Japanese profile is allowed to move glyphs into the initial font, and <code>AutoSegmenterConfig</code> splits the CJK cluster into two disjoint groups: one covering all codepoints in Japanese, and a second for the remaining CJK codepoints.</p>
   </section>
 
   <!-- ====================================================================
@@ -1125,28 +889,26 @@
    <div class="columns">
     <section>
      <h3>Minimum Group Size (Privacy)</h3>
-     <p>The W3C IFT specification recommends a minimum number of codepoints per patch activation condition (<code>min_group_size = 4</code>) to prevent single-character text fingerprinting:</p>
-     <ul>
-      <li>A condition's effective group size is the size of its smallest disjunctive clause:
-       EffectiveGroupSize(<var>C</var>) &nbsp;=&nbsp; min<sub><var>C</var><sub><var>k</var></sub> &isin; <var>C</var></sub> |<var>C</var><sub><var>k</var></sub>|</li>
-      <li><strong>Phase A (Cost Reduction):</strong> Merger only accepts candidate merges with &Delta;cost &lt; 0.</li>
-      <li><strong>Phase B (Group Size Enforcement):</strong> For any remaining patches with EffectiveGroupSize &lt; <code>min_group_size</code>, the merger accepts <strong>positive &Delta;cost merges</strong>, greedily picking the <em>least positive</em> &Delta;cost until all conditions meet the minimum group size!</li>
+     <ul class="compact">
+      <li>Enforces <code>min_group_size = 4</code> per clause:
+       <br>min<sub><var>C</var><sub><var>k</var></sub> &isin; <var>C</var></sub> |<var>C</var><sub><var>k</var></sub>| &ge; 4</li>
+      <li><strong>Phase A:</strong> Greedily apply &Delta;cost &lt; 0 merges.</li>
+      <li><strong>Phase B:</strong> Accept <strong>least-positive &Delta;cost</strong> merges until &ge; 4.</li>
      </ul>
     </section>
     <section>
-     <h3>Heuristic Merging (Uncovered Codepoints)</h3>
-     <p>Fonts often contain symbols, PUA glyphs, or rare scripts not covered by frequency data (<code>ungrouped_config</code>):</p>
-     <ul>
-      <li>Without probability data, we use <code>HeuristicConfiguration</code> (<code>min_patch_size = 2500</code> bytes, <code>max_patch_size</code>).</li>
-      <li>Pre-groups ungrouped segments in blocks of 3 &times; <code>min_group_size</code> = 12.</li>
-      <li>For any patch below <code>min_patch_size</code>, merges adjacent exclusive patches (or segments in composite conditions) in codepoint order as long as the combined size stays &le; <code>max_patch_size</code>.</li>
+     <h3>Heuristic Merger (Fallback)</h3>
+     <ul class="compact">
+      <li>For symbols/PUA without frequency data.</li>
+      <li>Pre-groups in blocks of 3 &times; <code>min_group_size</code> = 12.</li>
+      <li>Merges adjacent patches in codepoint order up to <code>min_patch_size = 2500</code> B.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>To protect user privacy and prevent single-character fingerprinting, the IFT spec recommends a minimum group size (4 codepoints by default). Our cost merger handles this in two phases: first, it performs all merges that have a negative &Delta;cost. Second, if any patches still have an effective group size below 4, it allows positive &Delta;cost merges for those undersized patches, always choosing the candidate with the smallest cost penalty. For codepoints not covered by frequency datasets, a fast heuristic merger groups adjacent segments until patches reach at least 2,500 bytes.</p>
+   <p>To prevent single-character fingerprinting, our cost merger runs in two phases: Phase A performs all merges with negative &Delta;cost; Phase B allows least-positive &Delta;cost merges for any remaining patches with effective group size below 4. Uncovered codepoints use a fast heuristic merger targeting <code>min_patch_size = 2500</code> bytes.</p>
   </section>
 
   <!-- ====================================================================
@@ -1165,158 +927,133 @@
        SLIDE 35: THE PERFORMANCE BOTTLENECK
   ===================================================================== -->
   <section class="slide" id="encoding-bottlenecks">
-   <h2>The Bottleneck: O(<var>n</var><sup>2</sup>) Brotli Compressions</h2>
-   <p>Why is naive cost-based merging slow on large fonts?</p>
-   <ul>
-    <li>A CJK font can start with <var>n</var> &gt; 20,000 individual codepoint segments.</li>
-    <li>Evaluating all pairwise candidate merges requires C(<var>n</var>, 2) = O(<var>n</var><sup>2</sup>) cost delta evaluations—and each evaluation needs the <strong>Brotli-compressed size</strong> of the combined glyph patch!</li>
-    <li>Profiling shows that <strong>Brotli compression accounts for the vast majority of segmenter runtime</strong>, followed by condition/closure updates after non-trivial merges.</li>
-   </ul>
-     <h3>Five Pillars of Merger Optimization</h3>
-    <ol class="compact">
-     <li><strong>Best-Case Probability &amp; Size Pruning:</strong> Reject candidates mathematically before calling Brotli.</li>
-     <li><strong>Pre-Closure Grouping &amp; Low-Impact Cutoff:</strong> Shrink <var>n</var> upfront and skip O(<var>n</var><sup>2</sup>) search on the zero-probability long tail.</li>
-     <li><strong>Inert Segment Exploitation:</strong> Fast-path segments that have no cross-segment glyph dependencies and batch initial-font merges.</li>
-     <li><strong>Multi-Layer Caching &amp; Brotli Quality Tiers:</strong> Memoize patch sizes, closures, and probabilities; tune Brotli quality (<code>0</code>, <code>9</code>, <code>11</code>).</li>
-     <li><strong>Incremental Dependency Graph Updates &amp; Base-Segment Composite Filtering:</strong> Reprocess only the affected subgraph on each merge.</li>
-    </ol>
+   <h2>Bottleneck: O(<var>n</var><sup>2</sup>) Compressions</h2>
+   <p>CJK fonts start with <var>n</var> &gt; 20,000 segments &rarr; O(<var>n</var><sup>2</sup>) candidate pairs.</p>
+   <h3>Four Optimization Pillars</h3>
+   <ol class="compact">
+    <li><strong>Best-Case Pruning:</strong> Reject pairs before calling Brotli.</li>
+    <li><strong>Pre-Grouping &amp; Cutoff:</strong> Shrink <var>n</var> upfront; skip rare tail.</li>
+    <li><strong>Inert Segments &amp; Partial Graph:</strong> Bypass closure when safe.</li>
+    <li><strong>Caching &amp; Brotli Tiers:</strong> Memoize sizes, closures &amp; probs.</li>
+   </ol>
   </section>
 
   <section class="comment">
-   <p>If we naively implemented the greedy merger on a 20,000-codepoint font, evaluating C(<var>n</var>, 2) pairs would require hundreds of millions of Brotli compressions. Profiling confirms that Brotli compression dominates runtime. To make the segmenter practical across the entire Google Fonts corpus, we rely on five key optimization techniques.</p>
+   <p>Evaluating C(<var>n</var>, 2) pairs on a 20,000-codepoint font would naively require hundreds of millions of Brotli compressions. To make segmentation practical across the Google Fonts corpus, we combine four key optimization pillars.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 36: OPTIMIZATION 1 - BEST-CASE PRUNING
   ===================================================================== -->
   <section class="slide" id="opt-best-case-pruning">
-   <h2>Optimization 1: Best-Case Cost Pruning</h2>
-   <p>Before running Brotli to measure size(<var>A</var> &cup; <var>B</var>), we compute a <strong>lower bound on the merged patch size</strong> using the already-known sizes of patches <var>A</var> and <var>B</var> (<code>candidate_merge.cc</code>):</p>
-   <p>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header_overhead</p>
+   <h2>Opt 1: Best-Case Cost Pruning</h2>
+   <p><strong>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header</strong></p>
    <div class="columns">
     <section>
-     <h3>Theoretical vs. Empirical Bound (<var>f</var><sub>best</sub>)</h3>
-     <ul>
-      <li><strong>Theoretical lower bound (<var>f</var><sub>best</sub> = 0):</strong> The smaller patch's outline data is 100% redundant with the larger patch and compresses to 0 extra bytes.</li>
-      <li><strong>Empirical bound (<code>best_case_size_reduction_fraction = 0.5</code>):</strong> Across real fonts at Brotli Q9, <strong>only 0.2% of glyph pairs</strong> compress to less than 0.5 &times; min(size(<var>A</var>), size(<var>B</var>)).</li>
+     <h3>Size Reduction Bound (<var>f</var><sub>best</sub>)</h3>
+     <ul class="compact">
+      <li><strong>Theoretical (<var>f</var><sub>best</sub> = 0):</strong> 0 extra bytes for smaller patch.</li>
+      <li><strong>Empirical (<var>f</var><sub>best</sub> = 0.5):</strong> <strong>99.8% of pairs</strong> retain &ge; 50% of min(size(<var>A</var>), size(<var>B</var>)).</li>
      </ul>
     </section>
     <section>
-     <h3>Early Rejection Without Brotli</h3>
-     <ol>
-      <li>Compute <var>P</var>(<var>c</var><sub><var>A</var>&cup;<var>B</var></sub>) and plug size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) into the &Delta;cost formula.</li>
-      <li>If &Delta;cost<sub>best</sub> &ge; 0 (or &Delta;cost<sub>best</sub> &ge; &Delta;cost<sub>current_best</sub>):
-       <br><strong>Prune the candidate pair immediately!</strong></li>
-      <li>Eliminates the vast majority of Brotli compression calls with negligible impact on final segmentation cost.</li>
-     </ol>
+     <h3>Early Rejection</h3>
+     <ul class="compact">
+      <li>Plug size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) into &Delta;cost.</li>
+      <li>If &Delta;cost<sub>best</sub> &ge; 0 (or &ge; best &Delta;cost), <strong>skip Brotli!</strong></li>
+     </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Our most impactful pruning technique is Best-Case Cost Pruning. Before we ever invoke Brotli on a candidate merge of patches <var>A</var> and <var>B</var>, we ask: what is the smallest possible byte size the combined patch could have? Theoretically, it's max(size(<var>A</var>), size(<var>B</var>)) if the smaller patch compresses for free. Empirically, across real fonts at Brotli 9, 99.8% of pairs retain at least 50% of the smaller patch's compressed size (<code>best_case_size_reduction_fraction = 0.5</code>). If even that best-case size cannot beat our current best &Delta;cost (or cannot produce a negative &Delta;cost), we skip the Brotli compression entirely.</p>
+   <p>Before invoking Brotli on a candidate merge of patches <var>A</var> and <var>B</var>, we compute the smallest plausible merged size. Empirically, across real fonts at Brotli 9, 99.8% of pairs retain at least 50% of the smaller patch's compressed size (<code>best_case_size_reduction_fraction = 0.5</code>). If even that best-case size cannot beat our current best &Delta;cost, we skip Brotli entirely.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING
   ===================================================================== -->
   <section class="slide" id="opt-cutoff-pregrouping">
-   <h2>Optimization 2: Low-Impact Cutoff &amp; Pre-Grouping</h2>
-   <p>Codepoint frequencies follow a steep Zipfian distribution: a long tail of rare characters has <var>P</var>(<var>c</var><sub><var>i</var></sub>) &asymp; 0 and contributes almost nothing to cost(<var>S</var>) = &sum; <var>P</var>(<var>c</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>).</p>
+   <h2>Opt 2: Pre-Grouping &amp; Tail Cutoff</h2>
    <div class="columns">
     <section>
-     <h3>1. Pre-Closure Grouping (PreGroupSegments)</h3>
-     <ul>
-      <li>Sorts segments within each merge group by descending probability <var>P</var>(<var>s</var><sub><var>i</var></sub>).</li>
-      <li>Before running condition analysis or closure, adjacent non-feature segments with <var>P</var>(<var>s</var><sub><var>i</var></sub>) &le; threshold (<code>0.05%</code> to <code>5%</code> by Quality Level) are pre-merged into groups of <code>kMinimumGroupSize = 4</code>.</li>
-      <li><strong>Impact:</strong> Immediately reduces <var>n</var> by up to 4&times; before any O(<var>n</var><sup>2</sup>) work begins!</li>
+     <h3>1. Pre-Closure Grouping</h3>
+     <ul class="compact">
+      <li>Sorts segments by descending <var>P</var>(<var>s</var><sub><var>i</var></sub>).</li>
+      <li>Pre-merges tail segments below <code>0.05%–5%</code> into groups of 4 <strong>before</strong> closure.</li>
+      <li>Cuts initial <var>n</var> by up to <strong>4&times;</strong>!</li>
      </ul>
     </section>
     <section>
-     <h3>2. Optimization Cutoff (optimization_cutoff_fraction)</h3>
-     <ul>
-      <li>Computes each segment's baseline cost contribution <var>P</var>(<var>s</var><sub><var>i</var></sub>) &middot; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>).</li>
-      <li>Segments in the bottom tail whose cumulative contribution is below <code>optimization_cutoff_fraction</code> (<code>0.5%</code> to <code>5%</code>) have <strong>cost optimization disabled</strong>.</li>
-      <li>Excluded from O(<var>n</var><sup>2</sup>) best-pair search; when merged to meet <code>min_group_size</code>, they simply merge with the next available segment in O(1) steps!</li>
+     <h3>2. Optimization Cutoff</h3>
+     <ul class="compact">
+      <li>Ranks segments by baseline cost <var>P</var>(<var>s</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>).</li>
+      <li>Marks bottom <code>0.5%–5%</code> cumulative cost tail as cutoff.</li>
+      <li>Skips O(<var>n</var><sup>2</sup>) search on cutoff segments; merges in O(1)!</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Second, we exploit the heavy-tailed Zipfian distribution of character frequencies. Most scripts have a long tail of rare codepoints whose probabilities are near zero. First, during <code>PreGroupSegments</code>, segments below the preprocess probability threshold are grouped into chunks of 4 before we even build the dependency graph. Second, segments in the bottom 0.5% to 5% of total cost contribution are marked as cutoff segments: we skip O(<var>n</var><sup>2</sup>) pair evaluation on them completely, dramatically shrinking the effective <var>n</var> in O(<var>n</var><sup>2</sup>).</p>
+   <p>We exploit the Zipfian distribution of character frequencies in two ways: first, <code>PreGroupSegments</code> merges rare segments into chunks of 4 before building the dependency graph; second, segments in the bottom 0.5% to 5% of total cost contribution skip O(<var>n</var><sup>2</sup>) pair evaluation completely.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 38: OPTIMIZATION 3 - INERT SEGMENTS & INCREMENTAL UPDATES
   ===================================================================== -->
   <section class="slide" id="opt-inert-incremental">
-   <h2>Optimization 3: Inert Segments &amp; Incremental Updates</h2>
+   <h2>Opt 3: Inert Segments &amp; Partial Graph</h2>
    <div class="columns">
     <section>
-     <h3>Exploiting Inert Segments</h3>
-     <p>An <strong>inert segment</strong> is a segment whose codepoints only activate exclusive glyphs and never interact with any other segment in <code>GSUB</code>, <code>cmap 14</code>, or <code>glyf</code>:</p>
-     <ul>
-      <li><strong>Closed Under Union:</strong> Merging two inert segments is guaranteed to produce a new inert segment whose glyph set is simply <var>G</var><sub><var>a</var></sub> &cup; <var>G</var><sub><var>b</var></sub>—<strong>zero dependency graph or closure re-evaluation needed!</strong></li>
-      <li><strong>Batch Initial Font Merging:</strong> Because inert segments don't interact with each other, merging one into <var>s</var><sub>0</sub> barely affects the &Delta;cost of another. We evaluate all inert candidates in a single pass and apply them as a <strong>batch</strong>!</li>
+     <h3>Inert Segments</h3>
+     <ul class="compact">
+      <li>Only exclusive glyphs; zero cross-segment edges.</li>
+      <li><strong>Closed Under Union:</strong> Merging yields <var>G</var><sub><var>a</var></sub> &cup; <var>G</var><sub><var>b</var></sub> with <strong>zero closure recomputation</strong>.</li>
+      <li><strong>Batch Init Merging:</strong> Moves inert segments to <var>s</var><sub>0</sub> in one batch!</li>
      </ul>
     </section>
     <section>
-     <h3>Incremental Graph Updates &amp; Filtering</h3>
-     <ul>
-      <li><strong>Partial Invalidation (<code>ReprocessChanged</code>):</strong> When non-inert segments merge into <var>s</var><sub>base</sub>, <code>DependencyClosure::SegmentsToAffectedGlyphs</code> locates only the glyphs reachable from <var>s</var><sub>base</sub> and recomputes conditions exclusively for that subgraph.</li>
-      <li><strong>Base-Segment Composite Filtering:</strong> When evaluating 3+-way composite condition merges, restricting candidates to composite conditions that already reference <code>base_segment_index</code> cuts total Google Fonts corpus segmentation time by <strong>~15%</strong> (and up to <strong>86%</strong> on complex Arabic fonts like Amiri).</li>
+     <h3>Incremental Graph Updates</h3>
+     <ul class="compact">
+      <li><strong>Partial Invalidation:</strong> Updates only glyphs reachable from merged segment.</li>
+      <li><strong>Composite Filtering:</strong> Restricts 3+-way merges to <code>base_segment_index</code> (<strong>~15%</strong> faster; <strong>86%</strong> on Arabic).</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Third, we identify "inert segments" during condition analysis—segments that only map to exclusive glyphs and have zero multi-segment interactions. When two inert segments merge, the resulting segment is guaranteed to be inert and its glyph set is simply the union of the two glyph sets, requiring zero condition recomputation. Even better, during initial font merging, we can evaluate all inert segments in one pass and move them into the initial font in a single batch. And when non-inert segments merge, we use the dependency graph to incrementally update only the affected glyphs.</p>
+   <p>Inert segments only map to exclusive glyphs and have zero multi-segment interactions. Merging two inert segments requires zero condition recomputation, and inert segments can be merged into the initial font in a single batch. When non-inert segments merge, we incrementally update only the reachable subgraph.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 39: OPTIMIZATION 4 - CACHING & BROTLI QUALITY TIERS
   ===================================================================== -->
   <section class="slide" id="opt-caching-brotli">
-   <h2>Optimization 4: Multi-Layer Caching &amp; Brotli Tiers</h2>
+   <h2>Opt 4: Caching &amp; Brotli Quality Tiers</h2>
    <div class="columns">
     <section>
-     <h3>1. PatchSizeCache</h3>
-     <p>Maps <code>GlyphSet → uint32_t (compressed bytes)</code>:</p>
-     <ul>
-      <li>Memoizes exact Brotli-compressed `.ift_gk` patch sizes.</li>
-      <li>Prevents ever re-compressing the same glyph set across merge iterations.</li>
-      <li>Tracks hit/miss statistics.</li>
+     <h3>Three Caches</h3>
+     <ul class="compact">
+      <li><strong><code>PatchSizeCache</code>:</strong> <code>GlyphSet &rarr; compressed bytes</code>.</li>
+      <li><strong><code>GlyphClosureCache</code>:</strong> <code>SubsetDefinition &rarr; GlyphSet</code>.</li>
+      <li><strong>Probability Caches:</strong> Vector for <var>P</var>(<var>s</var><sub><var>i</var></sub>) + hash map for clauses.</li>
      </ul>
     </section>
     <section>
-     <h3>2. GlyphClosureCache</h3>
-     <p>Maps <code>SubsetDefinition → GlyphSet</code>:</p>
-     <ul>
-      <li>Preprocesses <code>hb_face_t</code> once via <code>hb_subset_preprocess</code>.</li>
-      <li>Expands <code>UnicodeClosure</code> and caches HarfBuzz subsetter plans.</li>
-     </ul>
-    </section>
-    <section>
-     <h3>3. Probability Caches</h3>
-     <p>Inside each <code>ProbabilityCalculator</code>:</p>
-     <ul>
-      <li>Caches single-segment bounds <var>P</var>(<var>s</var><sub><var>i</var></sub>) in a dense vector.</li>
-      <li>Caches disjunctive clause bounds <var>P</var>(<var>s</var><sub><var>i</var><sub>1</sub></sub> &or; &hellip; &or; <var>s</var><sub><var>i</var><sub><var>k</var></sub></sub>) in a hash map keyed by <code>SegmentSet</code>.</li>
+     <h3>Brotli Quality Tiers</h3>
+     <ul class="compact">
+      <li><strong>Quality 11 (Q6–Q7):</strong> Maximum accuracy.</li>
+      <li><strong>Quality 9 (Q4–Q5):</strong> Much faster, near-identical merges.</li>
+      <li><strong>Quality 0 (Q1–Q3):</strong> O(1) size estimate via font-wide compression ratio!</li>
      </ul>
     </section>
    </div>
-     <h3>Configurable Brotli Quality Tiers (brotli_quality &amp; EstimatedPatchSizeCache)</h3>
-    <ul class="compact">
-     <li><strong>Brotli Quality 11 (Q6–Q7):</strong> Maximum compression accuracy; used for final encoding and small fonts.</li>
-     <li><strong>Brotli Quality 9 (Q4–Q5):</strong> Orders of magnitude faster than Q11 with nearly identical merge decisions.</li>
-     <li><strong>Brotli Quality 0 (Q1–Q3, <code>EstimatedPatchSizeCache</code>):</strong> Computes the input font's overall outline compression ratio once at startup and estimates size(<var>p</var>) = raw_outline_bytes(<var>p</var>) &times; ratio in O(1) time without calling Brotli!</li>
-    </ul>
   </section>
 
   <section class="comment">
-   <p>Fourth, we layerthree caches across the segmenter: <code>PatchSizeCache</code> memoizes compressed patch sizes by <code>GlyphSet</code>; <code>GlyphClosureCache</code> memoizes HarfBuzz closure results on a pre-processed face; and each <code>ProbabilityCalculator</code> caches both single-segment and disjunctive subgroup probability bounds. On top of caching, we allow tuning the Brotli quality used during merge evaluation—from Quality 11 down to Quality 9, or Quality 0 where <code>EstimatedPatchSizeCache</code> estimates patch sizes from raw glyph byte counts using the font's baseline compression ratio.</p>
+   <p>We layer three caches across the segmenter: <code>PatchSizeCache</code>, <code>GlyphClosureCache</code>, and per-calculator probability caches. We also tune the Brotli quality used during merge evaluation—from Q11 down to Q9, or Q0 where <code>EstimatedPatchSizeCache</code> estimates patch sizes in O(1) time using the font's overall outline compression ratio.</p>
   </section>
 
   <!-- ====================================================================
@@ -1324,31 +1061,27 @@
   ===================================================================== -->
   <section class="slide" id="closure-validation">
    <h2>Closure Requirement Validation</h2>
-   <p>Before emitting the final <code>SegmentationPlan</code>, the segmenter runs two verification passes (<code>segmentation_context.cc</code>):</p>
    <div class="columns">
     <section>
      <h3>1. ValidateIncrementalGroupings</h3>
-     <ul>
-      <li>Creates a fresh <code>SegmentationContext</code> with the final merged segments and combined patch partitions.</li>
-      <li>Re-runs condition analysis and grouping <strong>from scratch (non-incrementally)</strong>.</li>
-      <li>Verifies that the incrementally maintained conditions and glyph groupings match the clean full recomputation.</li>
+     <ul class="compact">
+      <li>Re-runs condition analysis and grouping <strong>from scratch</strong> on the final segments.</li>
+      <li>Asserts incremental state matches full recomputation.</li>
      </ul>
     </section>
     <section>
-     <h3>2. ValidateSegmentation (Closure Check)</h3>
-     <ul>
-      <li><strong>Partition Check:</strong> Verifies <var>s</var><sub>0</sub> and all patch glyph sets <var>G</var><sub><var>p</var></sub> are strictly disjoint and their union equals <code>FullClosure()</code>.</li>
-      <li><strong>No Missing Conditions Check (<code>HasAdditionalConditions</code>):</strong>
-       <br>For every patch <var>G</var><sub><var>p</var></sub> and every disjunctive clause <var>C</var><sub><var>k</var></sub> = (<var>s</var><sub><var>k</var>,1</sub> &or; &hellip; &or; <var>s</var><sub><var>k</var>,<var>m</var></sub>) in its CNF condition, computes the HarfBuzz glyph closure of <strong>all segments except <var>C</var><sub><var>k</var></sub></strong>:
-       closure(<var>F</var>, &nbsp;<var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub>) &nbsp;&cap;&nbsp; <var>G</var><sub><var>p</var></sub> &nbsp;=&nbsp; &empty;
-       Proves no glyph in <var>G</var><sub><var>p</var></sub> can ever be needed when <var>C</var><sub><var>k</var></sub> is false!</li>
+     <h3>2. ValidateSegmentation</h3>
+     <ul class="compact">
+      <li><strong>Partition Check:</strong> <var>s</var><sub>0</sub> and all <var>G</var><sub><var>p</var></sub> are disjoint and union to <code>FullClosure()</code>.</li>
+      <li><strong>Complement Closure Check:</strong> For each patch <var>G</var><sub><var>p</var></sub> and clause <var>C</var><sub><var>k</var></sub>:
+       <br><strong>closure(<var>F</var>, <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub>) &cap; <var>G</var><sub><var>p</var></sub> = &empty;</strong></li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>How do we guarantee that our dependency graph and incremental merger never violate the HarfBuzz closure requirement? At the end of segmentation, we run two strict validation checks. First, <code>ValidateIncrementalGroupings</code> recomputes all glyph conditions from scratch and asserts equivalence with the incremental state. Second, <code>ValidateSegmentation</code> verifies that every glyph in <code>FullClosure()</code> is placed in at most one patch, and then for every disjunctive clause <var>C</var><sub><var>k</var></sub> of every patch's condition, it runs actual HarfBuzz closure on the complement set <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub> to prove that none of the patch's glyphs can be reached without <var>C</var><sub><var>k</var></sub>!</p>
+   <p>At the end of segmentation, we run two strict validation checks: <code>ValidateIncrementalGroupings</code> recomputes all glyph conditions from scratch and asserts equivalence with the incremental state; <code>ValidateSegmentation</code> verifies disjoint partitioning and runs HarfBuzz closure on the complement set <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub> for every clause <var>C</var><sub><var>k</var></sub> to prove no glyph in <var>G</var><sub><var>p</var></sub> can be reached when <var>C</var><sub><var>k</var></sub> is false.</p>
   </section>
 
   <!-- ====================================================================
@@ -1367,31 +1100,25 @@
        SLIDE 42: COMPILER OVERVIEW & TABLE-KEYED PATCH GRAPH
   ===================================================================== -->
   <section class="slide" id="compiler-overview">
-   <h2>Compiler Overview &amp; The Table-Keyed Patch Graph</h2>
-   <p>While Glyph-Keyed patches (<code>.ift_gk</code>) are independent per-glyph outline bundles, Table-Keyed patches (<code>.ift_tk</code>) are <strong>invalidating binary diffs</strong> over non-outline tables (<code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, etc.) that form a <strong>Directed Acyclic Graph (DAG)</strong>:</p>
+   <h2>The Table-Keyed Patch Graph (DAG)</h2>
    <figure>
     <svg style="text-shadow: none" viewBox="0 0 820 165" width="790" height="158" role="img" aria-label="Table-keyed patch graph DAG showing nodes A, A+B, A+C, and A+B+C">
-     <!-- Node A -->
      <rect x="20" y="52" width="145" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="92" y="78" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Init Node: {A}</text>
      <text x="92" y="98" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Initial IFT Font</text>
 
-     <!-- Node A+B -->
      <rect x="310" y="8" width="165" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
      <text x="392" y="33" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Node: {A + B}</text>
      <text x="392" y="51" text-anchor="middle" fill="var(--slide-fg)" font-size="10">Extended with seg B</text>
 
-     <!-- Node A+C -->
      <rect x="310" y="102" width="165" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
      <text x="392" y="127" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Node: {A + C}</text>
      <text x="392" y="145" text-anchor="middle" fill="var(--slide-fg)" font-size="10">Extended with seg C</text>
 
-     <!-- Node A+B+C -->
      <rect x="625" y="52" width="175" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="712" y="78" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Node: {A + B + C}</text>
      <text x="712" y="98" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Full Non-Outline Font</text>
 
-     <!-- Single segment edges -->
      <line x1="165" y1="68" x2="305" y2="36" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
      <text x="230" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +B</text>
 
@@ -1404,14 +1131,13 @@
      <line x1="475" y1="128" x2="620" y2="96" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
      <text x="550" y="126" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +B</text>
 
-     <!-- Jump ahead / Prefetch edge -->
      <line x1="165" y1="82" x2="620" y2="82" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
      <text x="392" y="77" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-weight="bold">Jump Ahead 2: +B+C (1 RT via Prefetch List)</text>
     </svg>
    </figure>
    <ul class="compact">
-    <li><strong>Nodes:</strong> Uniquely identified by the <code>SubsetDefinition</code> (codepoints, features, design space) covered at that state.</li>
-    <li><strong>Edges &amp; Jumps:</strong> An edge transitions from base node <var>A</var> to target node <var>A</var> &cup; &Delta; via one or more sequential patch applications (<em>jumps</em>).</li>
+    <li><strong>Nodes:</strong> Non-outline table subset states (<code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, design space).</li>
+    <li><strong>Edges:</strong> Per-table Brotli shared-dictionary binary diffs (<code>.ift_tk</code>) transitioning <var>A</var> &rarr; <var>A</var> &cup; &Delta;.</li>
    </ul>
   </section>
 
@@ -1423,92 +1149,73 @@
        SLIDE 43: TABLE-KEYED PATCH GRAPH SHAPE PARAMETERS
   ===================================================================== -->
   <section class="slide" id="patch-graph-parameters">
-   <h2>Table-Keyed Patch Graph Shape Parameters</h2>
-   <p>With <var>S</var> table-keyed segments, a full hypercube has &sum;<sub><var>d</var>=0..<var>S</var>&minus;1</sub> C(<var>S</var>, <var>d</var>)(<var>S</var> &minus; <var>d</var>) = <var>S</var> &middot; 2<sup><var>S</var>&minus;1</sup> single-step patches! Four parameters in <code>SegmentationPlan</code> control the tradeoff between client round trips and total patch count:</p>
+   <h2>Table-Keyed Graph Shape Parameters</h2>
    <div class="columns">
     <section>
-     <h3>1. jump_ahead (Auto-Config: 2)</h3>
-     <p>Adds outgoing edges at each node for all combinations of 2 &hellip; <code>jump_ahead</code> segments simultaneously, allowing multi-segment extensions in a single round trip.</p>
-     <h3>2. use_prefetch_lists (Auto-Config: true)</h3>
-     <p>Instead of emitting a new binary patch for a multi-segment edge like <var>A</var> &rarr; <var>A</var>+<var>B</var>+<var>C</var>, encodes the edge as a <strong>Prefetch List</strong> of existing single-segment patches:
-      <br><code>[patch(A → A+B), patch(A+B → A+B+C)]</code>.
-      <br>Client fetches both in <strong>1 round trip</strong> and applies them sequentially—eliminating combinatorial patch explosion!</p>
+     <h3>1. jump_ahead (Default: 2)</h3>
+     <p>Adds multi-segment outgoing edges in 1 round trip.</p>
+     <h3>2. use_prefetch_lists (true)</h3>
+     <p>Encodes multi-segment edges as a Format 2 <strong>Prefetch List</strong> of single-segment patches—<strong>zero extra patch files</strong>!</p>
     </section>
     <section>
-     <h3>3. max_depth (Auto-Capped &le; 2048 patches)</h3>
-     <p>Caps the maximum depth (round trips) of the DAG. At depth <code>max_depth</code> &minus; 1, each node has a single outgoing patch that adds <strong>all remaining segments at once</strong>:</p>
-     <p>Patches(<var>S</var>, <var>D</var>) &nbsp;=&nbsp; &sum;<sub><var>d</var>=0..<var>D</var>&minus;2</sub> C(<var>S</var>, <var>d</var>) &middot; (<var>S</var> &minus; <var>d</var>) &nbsp;+&nbsp; C(<var>S</var>, <var>D</var> &minus; 1)</p>
-     <p class="note"><code>ConfigureMaxDepth</code> reduces <code>max_depth</code> (down to floor <code>3</code>) whenever estimated patches exceed <code>2048</code>.</p>
+     <h3>3. max_depth (&le; 2048 patches)</h3>
+     <p>Caps DAG depth <var>D</var> (floor <code>3</code>); at <var>D</var>&minus;1, one patch adds all remaining segments.</p>
      <h3>4. include_all_segment_patches</h3>
-     <p>Optional flag that adds a direct "add all remaining segments" patch at <em>every</em> node in the graph.</p>
+     <p>Optional "add all remaining" edge at every node.</p>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>If a font has many scripts, a full hypercube of table-keyed patches grows as <var>S</var> &middot; 2<sup><var>S</var>&minus;1</sup>. We shape this graph with four parameters in <code>SegmentationPlan</code>: <code>jump_ahead = 2</code> lets clients add two script segments in a single round trip; <code>use_prefetch_lists = true</code> encodes multi-segment edges by listing a sequence of single-segment patches in the IFT Format 2 prefetch list rather than creating new patch binaries; and <code>max_depth</code> caps the depth of the graph so that total table-keyed patches stay under 2,048.</p>
+   <p>If a font has many scripts, a full hypercube of table-keyed patches grows as <var>S</var> &middot; 2<sup><var>S</var>&minus;1</sup>. We shape this graph with four parameters in <code>SegmentationPlan</code>: <code>jump_ahead = 2</code> lets clients add two script segments in a single round trip; <code>use_prefetch_lists = true</code> encodes multi-segment edges by listing single-segment patches in the Format 2 prefetch list; and <code>max_depth</code> caps the depth of the graph so total table-keyed patches stay under 2,048.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 44: RECURSIVE COMPILATION ALGORITHM
   ===================================================================== -->
   <section class="slide" id="compiler-algorithm">
-   <h2>Recursive Compilation Algorithm (Compile)</h2>
-   <p>Starting at the Initial Font subset definition, <code>Compiler::Compile</code> recursively traverses the table-keyed graph (<code>compiler.cc</code>):</p>
-   <ol>
-    <li><strong>Generate Glyph-Keyed Patch Set (Cached by Design Space):</strong>
-     <br>For the node's variable design space, instance the original font to that design space and extract per-glyph outline slices (<code>glyf</code>/<code>gvar</code>/<code>CFF</code>/<code>CFF2</code>) for each patch in <code>glyph_patches</code>. Compress with Brotli (<code>.ift_gk</code>) and assign a 128-bit Patch Set Compatibility ID.</li>
-    <li><strong>Assign Node Compatibility ID &amp; Enumerate Outgoing Edges:</strong>
-     <br>Generate a unique 128-bit Compatibility ID for the current node and construct all single-segment, <code>jump_ahead</code>, <code>use_prefetch_lists</code>, and <code>max_depth</code> outgoing edges.</li>
-    <li><strong>Optimize &amp; Serialize Patch Map Tables (<code>EntryGraph</code>):</strong>
-     <br>Convert CNF glyph activation conditions and table-keyed edges into Format 2 Patch Map entries (<code>IFT </code> and <code>IFTX</code>), running <code>EntryGraph::Optimize()</code> to share common sub-entries and minimize table byte size.</li>
-    <li><strong>Construct &amp; Cache Node Font Binary:</strong>
-     <br>Subset the original font to the node's base subset definition, attach the <code>IFT </code>/<code>IFTX</code> mapping tables, and cache the resulting font binary.</li>
-    <li><strong>Recurse on Outgoing Jumps &amp; Emit <code>.ift_tk</code> Diffs:</strong>
-     <br>For each jump <var>B</var> &rarr; <var>B&prime;</var>, recursively compile <var>B&prime;</var> and run per-table Brotli shared-dictionary diffing between <var>B</var> and <var>B&prime;</var> (cached by patch ID).</li>
+   <h2>Recursive Compilation (<code>Compile</code>)</h2>
+   <ol class="compact">
+    <li><strong>Glyph Patches (<code>.ift_gk</code>):</strong> Slice &amp; Brotli-compress outlines for design space.</li>
+    <li><strong>Outgoing Edges:</strong> Assign 128-bit ID; build 1-seg, prefetch &amp; <code>max_depth</code> jumps.</li>
+    <li><strong>Patch Maps (<code>EntryGraph</code>):</strong> Deduplicate shared sub-conditions into <code>IFT </code>/<code>IFTX</code>.</li>
+    <li><strong>Node Font:</strong> Subset original font to node state and insert <code>IFT </code>/<code>IFTX</code>.</li>
+    <li><strong>Table Diffs (<code>.ift_tk</code>):</strong> Recursively compile target nodes <var>B&prime;</var> and Brotli-diff <var>B</var> &rarr; <var>B&prime;</var>.</li>
    </ol>
   </section>
 
   <section class="comment">
-   <p>Here is the 5-step recursive algorithm in <code>Compiler::Compile</code>. At each node, we first generate (or look up in cache) the glyph-keyed patch set for the node's variable design space. Next, we enumerate outgoing table-keyed edges and compile both glyph-keyed and table-keyed conditions into Format 2 Patch Map tables using <code>EntryGraph::Optimize()</code> to deduplicate shared sub-clauses. Then we subset the font to the current node, insert the <code>IFT </code> and <code>IFTX</code> tables, and recursively compile target nodes to generate the Brotli shared-dictionary table-keyed patches.</p>
+   <p>Here is the 5-step recursive algorithm in <code>Compiler::Compile</code>. At each node, we generate (or look up in cache) the glyph-keyed patch set for the node's variable design space, enumerate outgoing table-keyed edges, compile Format 2 Patch Map tables using <code>EntryGraph::Optimize()</code>, subset the font to the current node, and recursively compile target nodes to generate Brotli shared-dictionary table-keyed patches.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 45: OPENTYPE SPECIAL HANDLING & INTEGRATION TESTING
   ===================================================================== -->
   <section class="slide" id="compiler-special-handling">
-   <h2>Compiler: OpenType Special Handling &amp; Testing</h2>
+   <h2>OpenType Special Handling &amp; Testing</h2>
    <div class="columns">
     <section>
-     <h3>OpenType Table Special Casing</h3>
-     <ul>
-      <li><strong>Retain GIDs &amp; Max GID:</strong> Subsets with <code>HB_SUBSET_FLAGS_RETAIN_GIDS</code> and retains the highest GID so <code>maxp.numGlyphs</code> accommodates all reachable <code>.ift_gk</code> patches.</li>
-      <li><strong>Long <code>loca</code> Offsets:</strong> Forces 32-bit <code>loca</code> offsets from the start if the fully extended <code>glyf</code> table needs them (since <code>.ift_gk</code> patches cannot alter <code>head.indexToLocFormat</code>).</li>
-      <li><strong>Two-Step <code>gvar</code> Subsetting:</strong> (1) Instance design space only; (2) subset glyphs without instancing—preserving identical <code>gvar</code> header shared tuples across nodes and <code>.ift_gk</code> patches.</li>
-      <li><strong><code>CFF</code> / <code>CFF2</code> Desubroutinization:</strong> Desubroutinizes charstrings upfront so per-glyph outlines are self-contained, and rebuilds <code>CharStrings</code> at the end of the table.</li>
-      <li><strong>WOFF2 Round-Trip:</strong> Round-trips the initial font through WOFF2 (with <code>glyf</code>/<code>loca</code> transforms disabled) so <code>.ift_tk</code> diffs match the client's decoded bytes.</li>
+     <h3>OpenType Requirements</h3>
+     <ul class="compact">
+      <li><strong>Retain GIDs:</strong> Sizes <code>maxp</code> for all patches.</li>
+      <li><strong>Long <code>loca</code>:</strong> Forces 32-bit offsets.</li>
+      <li><strong>2-Step <code>gvar</code>:</strong> Preserves shared tuples.</li>
+      <li><strong><code>CFF</code> &amp; WOFF2:</strong> Desubroutinizes &amp; round-trips.</li>
      </ul>
     </section>
     <section>
-     <h3>End-to-End Integration Testing</h3>
-     <p>Verified in <code>ift/integration_test.cc</code> by encoding real fonts (TrueType, CFF, CFF2, Variable, Multi-Script) and extending them with the <strong>Fontations IFT Client</strong> (<code>incremental-font-transfer</code>):</p>
-     <ul>
-      <li><strong>Closure &amp; Outline Equality:</strong> Asserts <code>cmap</code> coverage and per-glyph outline presence/bytes match the original font after extension.</li>
-      <li><strong>Network Efficiency:</strong> Verifies exact client round-trip counts (e.g. 1 RT with <code>jump_ahead</code> / prefetch lists) and total patch loads.</li>
-      <li><strong>Future Compiler Work:</strong>
-       <ul>
-        <li>Glyph-keyed-only encoding mode</li>
-        <li>Sorting table-keyed patch map entries by patch byte size</li>
-        <li>Conjunctive matching on multi-segment table-keyed entries</li>
-       </ul>
-      </li>
+     <h3>Fontations Integration Tests</h3>
+     <ul class="compact">
+      <li>Tested against Rust <strong>Fontations IFT Client</strong>.</li>
+      <li>Verifies exact <code>cmap</code>, outlines &amp; RTs.</li>
+      <li><strong>Future:</strong> GK-only mode &amp; size sorting.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Making table-keyed subsetting and glyph-keyed outline patching work seamlessly together requires careful OpenType engineering: retaining GIDs, forcing long <code>loca</code> offsets when needed, two-step <code>gvar</code> subsetting so shared tuples stay synchronized with glyph patches, desubroutinizing <code>CFF</code>/<code>CFF2</code> charstrings, and round-tripping the initial font through WOFF2 before diffing. All of this is continuously verified in integration tests against the Rust Fontations IFT client.</p>
+   <p>Making table-keyed subsetting and glyph-keyed outline patching work together requires careful OpenType engineering: retaining GIDs, forcing long <code>loca</code> offsets when needed, two-step <code>gvar</code> subsetting so shared tuples stay synchronized, desubroutinizing <code>CFF</code>/<code>CFF2</code> charstrings, and round-tripping the initial font through WOFF2 before diffing. All of this is verified against the Rust Fontations IFT client.</p>
   </section>
 
   <!-- ====================================================================
@@ -1517,7 +1224,6 @@
   <section class="slide final" id="conclusion">
    <div>
     <h2>Thank You &amp; Questions!</h2>
-    <p>The IFT Encoder combines <strong>phased dependency graph analysis</strong>, <strong>bigram-bounded cost merging</strong>, and <strong>prefetched patch graphs</strong> to make Incremental Font Transfer practical and automatic across all scripts.</p>
     <ul class="with-icons">
      <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
       <a href="https://github.com/w3c/ift-encoder">github.com/w3c/ift-encoder</a></li>
@@ -1531,11 +1237,11 @@
    </div>
    <div>
     <h2>Key Takeaways</h2>
-    <ul>
-     <li><strong>Zero-Config by Default:</strong> <code>font2ift</code> auto-detects scripts, clusters overlapping scripts, and picks quality levels.</li>
-     <li><strong>Exact Closure Safety:</strong> Phased Tarjan SCC extraction + CNF normalization + complement-closure verification.</li>
-     <li><strong>Principled Cost Optimization:</strong> Expected-byte cost function with Dawson–Sankoff bigram bounds and <var>P</var><sub>agg</sub> multi-script factoring.</li>
-     <li><strong>Fast at Corpus Scale:</strong> Best-case pruning, pre-grouping, inert segments, and caching tame O(<var>n</var><sup>2</sup>) Brotli costs.</li>
+    <ul class="compact">
+     <li><strong>Zero-Config:</strong> Auto script clustering.</li>
+     <li><strong>Closure-Safe:</strong> Tarjan SCC + CNF.</li>
+     <li><strong>Cost-Optimal:</strong> Bigram bounds &amp; <var>P</var><sub>agg</sub>.</li>
+     <li><strong>Fast at Scale:</strong> Pruning &amp; inert segs.</li>
     </ul>
    </div>
   </section>
