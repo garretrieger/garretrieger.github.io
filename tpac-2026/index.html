@@ -82,43 +82,43 @@
   <section class="slide" id="pipeline-overview">
    <h2>Three-Stage Encoding Pipeline</h2>
    <figure>
-    <svg style="text-shadow: none" viewBox="0 0 880 175" width="840" height="165" role="img" aria-label="Three-stage IFT encoding pipeline diagram">
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 155" role="img" aria-label="Three-stage IFT encoding pipeline diagram">
      <defs>
       <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
        <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--h3-fg)" />
       </marker>
      </defs>
-     <rect x="10" y="30" width="145" height="110" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="82" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="14" font-weight="bold">Input Font</text>
-     <text x="82" y="88" text-anchor="middle" fill="var(--slide-fg)" font-size="11">.ttf / .otf</text>
-     <text x="82" y="112" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-weight="bold">+ Freq Data</text>
+     <rect x="5" y="20" width="130" height="115" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="70" y="54" text-anchor="middle" fill="var(--slide-fg)" font-size="15" font-weight="bold">Input Font</text>
+     <text x="70" y="79" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5">.ttf / .otf</text>
+     <text x="70" y="105" text-anchor="middle" fill="var(--h3-fg)" font-size="12.5" font-weight="bold">+ Freq Data</text>
 
-     <line x1="155" y1="85" x2="195" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="135" y1="78" x2="165" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <rect x="200" y="15" width="185" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="292" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">1. Auto Config</text>
-     <text x="292" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Detect &amp; group scripts</text>
-     <text x="292" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Pick Quality Level (1–7)</text>
-     <rect x="218" y="112" width="148" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="292" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmenterConfig</text>
+     <rect x="170" y="8" width="170" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="255" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">1. Auto Config</text>
+     <text x="255" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Detect &amp; group scripts</text>
+     <text x="255" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Pick Quality (1–7)</text>
+     <rect x="184" y="102" width="142" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="255" y="122" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">SegmenterConfig</text>
 
-     <line x1="385" y1="85" x2="425" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="340" y1="78" x2="370" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <rect x="430" y="15" width="200" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="530" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">2. Segmenter</text>
-     <text x="530" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Dep graph conditions</text>
-     <text x="530" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Cost-based merging</text>
-     <rect x="450" y="112" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="530" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">SegmentationPlan</text>
+     <rect x="375" y="8" width="175" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="462" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">2. Segmenter</text>
+     <text x="462" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Dep graph conditions</text>
+     <text x="462" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Cost-based merging</text>
+     <rect x="390" y="102" width="145" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="462" y="122" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">SegmentationPlan</text>
 
-     <line x1="630" y1="85" x2="670" y2="85" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+     <line x1="550" y1="78" x2="580" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
 
-     <rect x="675" y="15" width="195" height="140" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="772" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">3. Compiler</text>
-     <text x="772" y="65" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Walk table-keyed DAG</text>
-     <text x="772" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Emit patch maps &amp; diffs</text>
-     <rect x="692" y="112" width="160" height="28" rx="4" fill="none" stroke="var(--h3-fg)"/>
-     <text x="772" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">font.woff2 + patches</text>
+     <rect x="585" y="8" width="170" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="670" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">3. Compiler</text>
+     <text x="670" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Walk table-keyed DAG</text>
+     <text x="670" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Emit patch maps &amp; diffs</text>
+     <rect x="596" y="102" width="148" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="670" y="122" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">font.woff2 + patches</text>
     </svg>
    </figure>
    <ul class="compact">
@@ -136,20 +136,21 @@
   ===================================================================== -->
   <section class="slide" id="producing-auto">
    <h2>Single-Step Workflow: font2ift</h2>
-   <pre><code>font2ift --input_font=MyFont.ttf --output_path=ift/ --output_font=MyFont.woff2</code></pre>
+   <pre><code>font2ift --input_font=MyFont.ttf \
+  --output_path=ift/ --output_font=MyFont.woff2</code></pre>
    <div class="columns">
     <section>
-     <h3>--auto_config_primary_script</h3>
+     <h3>Primary Script</h3>
      <ul class="compact">
+      <li><code>--auto_config_primary_script</code></li>
       <li>Target script (e.g., <code>Script_japanese</code>).</li>
-      <li>Merges top glyphs into the <strong>initial font</strong>.</li>
-      <li>Splits overlapping script clusters.</li>
+      <li>Merges top glyphs into <strong>initial font</strong> &amp; splits clusters.</li>
      </ul>
     </section>
     <section>
-     <h3>--auto_config_quality</h3>
+     <h3>Quality Level</h3>
      <ul class="compact">
-      <li>Optimization level (<code>1</code> to <code>7</code>).</li>
+      <li><code>--auto_config_quality</code> (<code>1</code> to <code>7</code>)</li>
       <li>Trades CPU time for smaller transfer bytes.</li>
       <li>Auto-selected by heuristic if omitted.</li>
      </ul>
@@ -166,24 +167,20 @@
   ===================================================================== -->
   <section class="slide" id="producing-multistep">
    <h2>Multi-Step Advanced Workflow</h2>
-   <div class="columns">
-    <section>
-     <h3>1. Generate Config</h3>
-     <pre><code>gen_ift_segmenter_config \
-  --quality=5 \
-  --input_font=MyFont.ttf \
-  &gt; config.txtpb</code></pre>
-    </section>
-    <section>
-     <h3>2. Generate Plan</h3>
-     <pre><code>gen_ift_segmentation_plan \
-  --input_font=MyFont.ttf \
-  --config=config.txtpb \
-  &gt; plan.txtpb</code></pre>
-    </section>
-   </div>
-   <h3>3. Compile Font &amp; Patches</h3>
-   <pre><code>font2ift --input_font=MyFont.ttf --plan=plan.txtpb --output_path=out/ --output_font=MyFont.woff2</code></pre>
+   <ol class="compact">
+    <li><strong>Generate Config:</strong>
+     <pre><code>gen_ift_segmenter_config --quality=5 \
+  --input_font=MyFont.ttf &gt; config.txtpb</code></pre>
+    </li>
+    <li><strong>Generate Segmentation Plan:</strong>
+     <pre><code>gen_ift_segmentation_plan --config=config.txtpb \
+  --input_font=MyFont.ttf &gt; plan.txtpb</code></pre>
+    </li>
+    <li><strong>Compile Font &amp; Patches:</strong>
+     <pre><code>font2ift --input_font=MyFont.ttf --plan=plan.txtpb \
+  --output_path=out/ --output_font=MyFont.woff2</code></pre>
+    </li>
+   </ol>
   </section>
 
   <section class="comment">
@@ -347,21 +344,21 @@
      </ul>
     </section>
     <figure>
-     <svg style="text-shadow: none" viewBox="0 0 380 210" width="370" height="205" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
-      <rect x="15" y="15" width="145" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-      <text x="87" y="38" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Patch 1: {gid_f}</text>
-      <text x="87" y="60" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">if (U+0066 'f')</text>
+     <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 380 210" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
+      <rect x="10" y="12" width="150" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="85" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 1: {gid_f}</text>
+      <text x="85" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0066 'f')</text>
 
-      <rect x="220" y="15" width="145" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-      <text x="292" y="38" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Patch 2: {gid_i}</text>
-      <text x="292" y="60" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">if (U+0069 'i')</text>
+      <rect x="220" y="12" width="150" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="295" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 2: {gid_i}</text>
+      <text x="295" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0069 'i')</text>
 
-      <line x1="87" y1="80" x2="165" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-      <line x1="292" y1="80" x2="215" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+      <line x1="85" y1="77" x2="165" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+      <line x1="295" y1="77" x2="215" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-      <rect x="75" y="130" width="230" height="68" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-      <text x="190" y="155" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Patch 3: {gid_fi} (Ligature)</text>
-      <text x="190" y="178" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">if (U+0066 'f' AND U+0069 'i')</text>
+      <rect x="70" y="130" width="240" height="68" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="190" y="155" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 3: {gid_fi} (Ligature)</text>
+      <text x="190" y="179" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0066 'f' AND U+0069 'i')</text>
      </svg>
     </figure>
    </div>
@@ -444,35 +441,35 @@
   <section class="slide" id="dependency-graph-nodes">
    <h2>Dependency Graph: Node Types</h2>
    <figure>
-    <svg style="text-shadow: none" viewBox="0 0 860 155" width="830" height="148" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
-     <rect x="15" y="42" width="165" height="70" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="97" y="68" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
-     <text x="97" y="88" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Entry point per segment s_i</text>
-     <text x="97" y="103" text-anchor="middle" fill="var(--slide-fg)" font-size="10">codepoints + features</text>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 770 155" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
+     <rect x="6" y="40" width="150" height="72" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="81" y="65" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
+     <text x="81" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Entry point per segment s_i</text>
+     <text x="81" y="102" text-anchor="middle" fill="var(--slide-fg)" font-size="11">codepoints + features</text>
 
-     <line x1="180" y1="62" x2="245" y2="42" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="180" y1="92" x2="245" y2="115" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="156" y1="62" x2="202" y2="42" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="156" y1="92" x2="202" y2="115" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <rect x="250" y="8" width="225" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="362" y="30" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Unicode Codepoint Node</text>
-     <text x="362" y="48" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• Unicode decomp/comp &amp; bidi</text>
-     <text x="362" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• cmap nominal &amp; cmap 14 UVS</text>
+     <rect x="206" y="6" width="212" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="312" y="28" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Unicode Codepoint Node</text>
+     <text x="312" y="47" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Unicode decomp/comp &amp; bidi</text>
+     <text x="312" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• cmap nominal &amp; cmap 14 UVS</text>
 
-     <rect x="250" y="88" width="225" height="60" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
-     <text x="362" y="110" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Feature Node</text>
-     <text x="362" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• Non-default OpenType tags</text>
-     <text x="362" y="143" text-anchor="middle" fill="var(--slide-fg)" font-size="10">(e.g. 'smcp', 'swsh', 'dlig')</text>
+     <rect x="206" y="86" width="212" height="62" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="312" y="108" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Feature Node</text>
+     <text x="312" y="126" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Non-default OpenType tags</text>
+     <text x="312" y="141" text-anchor="middle" fill="var(--slide-fg)" font-size="11">(e.g. 'smcp', 'swsh', 'dlig')</text>
 
-     <line x1="475" y1="42" x2="545" y2="65" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="475" y1="118" x2="545" y2="92" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="418" y1="42" x2="466" y2="65" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="418" y1="118" x2="466" y2="92" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <rect x="550" y="25" width="245" height="105" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="672" y="50" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node (GID)</text>
-     <text x="672" y="70" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• GSUB (Single, Alternate, Ligature,</text>
-     <text x="672" y="86" text-anchor="middle" fill="var(--slide-fg)" font-size="11">  Contextual / Chaining Subst)</text>
-     <text x="672" y="104" text-anchor="middle" fill="var(--slide-fg)" font-size="11">• glyf composites, COLR, MATH</text>
-     <path d="M 795 58 C 845 45, 845 110, 795 95" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="836" y="82" text-anchor="middle" fill="var(--slide-fg)" font-size="10">GID→GID</text>
+     <rect x="470" y="22" width="228" height="108" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="584" y="46" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node (GID)</text>
+     <text x="584" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• GSUB (Single, Alternate, Ligature,</text>
+     <text x="584" y="84" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">  Contextual / Chaining Subst)</text>
+     <text x="584" y="104" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• glyf composites, COLR, MATH</text>
+     <path d="M 698 56 C 742 43, 742 108, 698 95" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <text x="738" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="11">GID→GID</text>
     </svg>
    </figure>
    <ul class="compact">
@@ -491,20 +488,20 @@
    <h2>Edge Types &amp; Initial Font Folding</h2>
    <div class="columns">
     <section>
-     <h3>Disjunctive: <var>u</var> &rarr; <var>v</var></h3>
+     <h3>Disjunctive Edges</h3>
      <ul class="compact">
-      <li><var>u</var> alone requires <var>v</var> (<code>cmap</code>, <code>glyf</code>, <code>COLR</code>, default <code>GSUB</code>).</li>
+      <li><strong><var>u</var> &rarr; <var>v</var>:</strong> <var>u</var> alone requires <var>v</var> (<code>cmap</code>, <code>glyf</code>, <code>COLR</code>, default <code>GSUB</code>).</li>
      </ul>
-     <h3>Initial Font Folding (<var>s</var><sub>0</sub>)</h3>
+     <h3>Initial Font Folding</h3>
      <ul class="compact">
       <li>Nodes in <var>s</var><sub>0</sub> are <code>True</code> and stripped from contexts <var>C</var>.</li>
       <li>If <code>i</code> &isin; <var>s</var><sub>0</sub>, <code>f → fi (ctx: {i})</code> becomes <code>f → fi</code>!</li>
      </ul>
     </section>
     <section>
-     <h3>Conjunctive: <var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var></h3>
+     <h3>Conjunctive Edges</h3>
      <ul class="compact">
-      <li>Requires <var>u</var> <strong>AND all of context <var>C</var></strong>:
+      <li><strong><var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var>:</strong> Requires <var>u</var> <strong>AND all of context <var>C</var></strong>:
        <ul class="compact">
         <li><strong>Ligature:</strong> <code>f → fi</code> (ctx: {<var>i</var>})</li>
         <li><strong>UVS:</strong> <code>a → a.alt</code> (ctx: {VS1})</li>
@@ -587,7 +584,7 @@
      </ul>
     </section>
     <section>
-     <h3>Fast Or() &amp; Superset</h3>
+     <h3>Factoring &amp; Simplification</h3>
      <ul class="compact">
       <li><strong><code>Or(A, B)</code> Factoring:</strong> Extracts shared clauses <var>I</var> before cross-multiplying:
        <br>(<var>I</var> &and; <var>A&prime;</var>) &or; (<var>I</var> &and; <var>B&prime;</var>) = <var>I</var> &and; (<var>A&prime;</var> &or; <var>B&prime;</var>)</li>
@@ -695,17 +692,17 @@
    <h2>Segment Merging vs. Patch Merging</h2>
    <div class="columns">
     <section>
-     <h3>1. Segment Merge (<var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>)</h3>
+     <h3>1. Segment Merge</h3>
      <ul class="compact">
-      <li>Unions input segments and updates dependency conditions.</li>
+      <li><strong><var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>:</strong> Unions input segments and updates conditions.</li>
       <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Collapses <code>{f}</code>, <code>{i}</code>, <code>{fi}</code> into one exclusive patch <code>{f, i, fi}</code>!</li>
       <li>Best for exclusive patches &amp; folding ligatures.</li>
      </ul>
     </section>
     <section>
-     <h3>2. Patch Merge (<var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub>)</h3>
+     <h3>2. Patch Merge</h3>
      <ul class="compact">
-      <li>Directly unions two patches with condition <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
+      <li><strong><var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub>:</strong> Directly unions two patches with <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
       <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Forms <code>{f, i}</code> under <code>(f OR i)</code>; leaves <code>{fi}</code> untouched!</li>
       <li>Best for non-exclusive patches.</li>
      </ul>
@@ -724,7 +721,7 @@
    <h2>Initial Font Merging (<var>s</var><sub>0</sub>)</h2>
    <div class="columns">
     <section>
-     <h3>Why Move Glyphs to <var>s</var><sub>0</sub>?</h3>
+     <h3>Why Merge into Initial Font?</h3>
      <ul class="compact">
       <li>Near-100% probability glyphs waste patch overhead <var>k</var> and a round trip.</li>
       <li>Moving <var>s</var><sub><var>i</var></sub> into <var>s</var><sub>0</sub> simplifies downstream conjunctive conditions.</li>
@@ -838,7 +835,7 @@
    <h2>Multi-Dataset Cost &amp; <var>P</var><sub>agg</sub> Factoring</h2>
    <p>Unweighted sum across <var>M</var> profiles in a group (e.g. <var>M</var> = 4 for CJK):</p>
    <p><strong>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
-   <h3>Linearity Optimization (<var>P</var><sub>agg</sub>)</h3>
+   <h3>Linearity Optimization</h3>
    <ul class="compact">
     <li>size(<var>p</var><sub><var>i</var></sub>) and <var>k</var> are identical across all <var>M</var> datasets:
      <br><strong>&sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &nbsp;=&nbsp; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &times; <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>)</strong></li>
@@ -950,7 +947,7 @@
    <p><strong>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header</strong></p>
    <div class="columns">
     <section>
-     <h3>Size Reduction Bound (<var>f</var><sub>best</sub>)</h3>
+     <h3>Size Reduction Bound</h3>
      <ul class="compact">
       <li><strong>Theoretical (<var>f</var><sub>best</sub> = 0):</strong> 0 extra bytes for smaller patch.</li>
       <li><strong>Empirical (<var>f</var><sub>best</sub> = 0.5):</strong> <strong>99.8% of pairs</strong> retain &ge; 50% of min(size(<var>A</var>), size(<var>B</var>)).</li>
@@ -1063,16 +1060,16 @@
    <h2>Closure Requirement Validation</h2>
    <div class="columns">
     <section>
-     <h3>1. ValidateIncrementalGroupings</h3>
+     <h3>1. Incremental State Check</h3>
      <ul class="compact">
-      <li>Re-runs condition analysis and grouping <strong>from scratch</strong> on the final segments.</li>
+      <li><code>ValidateIncrementalGroupings</code> re-runs condition analysis and grouping <strong>from scratch</strong>.</li>
       <li>Asserts incremental state matches full recomputation.</li>
      </ul>
     </section>
     <section>
-     <h3>2. ValidateSegmentation</h3>
+     <h3>2. Closure &amp; Partition Check</h3>
      <ul class="compact">
-      <li><strong>Partition Check:</strong> <var>s</var><sub>0</sub> and all <var>G</var><sub><var>p</var></sub> are disjoint and union to <code>FullClosure()</code>.</li>
+      <li><strong><code>ValidateSegmentation</code>:</strong> <var>s</var><sub>0</sub> and all <var>G</var><sub><var>p</var></sub> are disjoint and union to <code>FullClosure()</code>.</li>
       <li><strong>Complement Closure Check:</strong> For each patch <var>G</var><sub><var>p</var></sub> and clause <var>C</var><sub><var>k</var></sub>:
        <br><strong>closure(<var>F</var>, <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub>) &cap; <var>G</var><sub><var>p</var></sub> = &empty;</strong></li>
      </ul>
@@ -1102,37 +1099,37 @@
   <section class="slide" id="compiler-overview">
    <h2>The Table-Keyed Patch Graph (DAG)</h2>
    <figure>
-    <svg style="text-shadow: none" viewBox="0 0 820 165" width="790" height="158" role="img" aria-label="Table-keyed patch graph DAG showing nodes A, A+B, A+C, and A+B+C">
-     <rect x="20" y="52" width="145" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="92" y="78" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Init Node: {A}</text>
-     <text x="92" y="98" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Initial IFT Font</text>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 160" role="img" aria-label="Table-keyed patch graph DAG showing nodes A, A+B, A+C, and A+B+C">
+     <rect x="8" y="50" width="140" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="78" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Init Node: {A}</text>
+     <text x="78" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Initial IFT Font</text>
 
-     <rect x="310" y="8" width="165" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="392" y="33" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Node: {A + B}</text>
-     <text x="392" y="51" text-anchor="middle" fill="var(--slide-fg)" font-size="10">Extended with seg B</text>
+     <rect x="285" y="6" width="160" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="365" y="31" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Node: {A + B}</text>
+     <text x="365" y="49" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Extended with seg B</text>
 
-     <rect x="310" y="102" width="165" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="392" y="127" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-weight="bold">Node: {A + C}</text>
-     <text x="392" y="145" text-anchor="middle" fill="var(--slide-fg)" font-size="10">Extended with seg C</text>
+     <rect x="285" y="98" width="160" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="365" y="123" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Node: {A + C}</text>
+     <text x="365" y="141" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Extended with seg C</text>
 
-     <rect x="625" y="52" width="175" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="712" y="78" text-anchor="middle" fill="var(--h3-fg)" font-size="13" font-weight="bold">Node: {A + B + C}</text>
-     <text x="712" y="98" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Full Non-Outline Font</text>
+     <rect x="580" y="50" width="172" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="666" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Node: {A + B + C}</text>
+     <text x="666" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Full Non-Outline Font</text>
 
-     <line x1="165" y1="68" x2="305" y2="36" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="230" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +B</text>
+     <line x1="148" y1="66" x2="280" y2="34" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <text x="210" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
 
-     <line x1="165" y1="96" x2="305" y2="128" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="230" y="126" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +C</text>
+     <line x1="148" y1="94" x2="280" y2="125" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <text x="210" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
 
-     <line x1="475" y1="36" x2="620" y2="68" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="550" y="42" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +C</text>
+     <line x1="445" y1="34" x2="575" y2="66" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <text x="515" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
 
-     <line x1="475" y1="128" x2="620" y2="96" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="550" y="126" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace">patch +B</text>
+     <line x1="445" y1="125" x2="575" y2="94" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <text x="515" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
 
-     <line x1="165" y1="82" x2="620" y2="82" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
-     <text x="392" y="77" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-weight="bold">Jump Ahead 2: +B+C (1 RT via Prefetch List)</text>
+     <line x1="148" y1="80" x2="575" y2="80" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+     <text x="365" y="75" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5" font-weight="bold">Jump Ahead 2: +B+C (1 RT via Prefetch List)</text>
     </svg>
    </figure>
    <ul class="compact">
@@ -1152,16 +1149,16 @@
    <h2>Table-Keyed Graph Shape Parameters</h2>
    <div class="columns">
     <section>
-     <h3>1. jump_ahead (Default: 2)</h3>
-     <p>Adds multi-segment outgoing edges in 1 round trip.</p>
-     <h3>2. use_prefetch_lists (true)</h3>
-     <p>Encodes multi-segment edges as a Format 2 <strong>Prefetch List</strong> of single-segment patches—<strong>zero extra patch files</strong>!</p>
+     <h3>1. Jump Ahead</h3>
+     <p><code>jump_ahead</code> (default <code>2</code>): adds multi-segment outgoing edges in 1 round trip.</p>
+     <h3>2. Prefetch Lists</h3>
+     <p><code>use_prefetch_lists</code> (<code>true</code>): encodes jumps as a Format 2 <strong>Prefetch List</strong> of 1-seg patches—<strong>zero extra patch files</strong>!</p>
     </section>
     <section>
-     <h3>3. max_depth (&le; 2048 patches)</h3>
-     <p>Caps DAG depth <var>D</var> (floor <code>3</code>); at <var>D</var>&minus;1, one patch adds all remaining segments.</p>
-     <h3>4. include_all_segment_patches</h3>
-     <p>Optional "add all remaining" edge at every node.</p>
+     <h3>3. Max Depth</h3>
+     <p><code>max_depth</code> (&le; 2048 patches): caps DAG depth <var>D</var> (floor <code>3</code>); at <var>D</var>&minus;1, one patch adds all remaining segments.</p>
+     <h3>4. All-Segment Edges</h3>
+     <p><code>include_all_segment_patches</code>: optional "add all remaining" edge at every node.</p>
     </section>
    </div>
   </section>
