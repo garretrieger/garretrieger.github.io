@@ -59,14 +59,14 @@
     <p>Compact <strong>Initial Font</strong> (WOFF2) with patch maps (<code>IFT </code> / <code>IFTX</code>).</p>
     <ul class="compact">
      <li><strong>Outlines:</strong> <code>glyf</code>, <code>loca</code>, <code>gvar</code>, <code>CFF</code>, <code>CFF2</code></li>
-     <li><strong>Non-Outlines:</strong> <code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, <code>COLR</code></li>
+     <li><strong>Non-Outlines:</strong> <code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, <code>COLR</code>, <code>...</code></li>
     </ul>
    </div>
    <div>
     <h3>Two Patch Types</h3>
     <ul class="compact">
-     <li><strong>Glyph-Keyed (<code>.ift_gk</code>):</strong> Additive per-glyph outline bundles.</li>
-     <li><strong>Table-Keyed (<code>.ift_tk</code>):</strong> Brotli binary diffs over non-outline tables (DAG).</li>
+     <li><strong>Glyph-Keyed (<code>.ift_gk</code>):</strong> Additive per-glyph data</li>
+     <li><strong>Table-Keyed (<code>.ift_tk</code>):</strong> Brotli binary diffs per table.</li>
      <li><strong>Mixed Mode:</strong> Coarse <code>.ift_tk</code> + fine <code>.ift_gk</code>.</li>
     </ul>
    </div>
@@ -122,13 +122,13 @@
     </svg>
    </figure>
    <ul class="compact">
-    <li><strong>Policy vs. Mechanism:</strong> Stages 1 &amp; 2 optimize the plan; Stage 3 deterministically compiles it.</li>
-    <li><strong>Textproto Contracts:</strong> Inspectable <code>segmenter_config.proto</code> and <code>segmentation_plan.proto</code>.</li>
+    <li>Stages 1 &amp; 2 optimize the plan; Stage 3 deterministically compiles it.</li>
+    <li>Inspectable <code>segmenter_config.proto</code> and <code>segmentation_plan.proto</code>.</li>
    </ul>
   </section>
 
   <section class="comment">
-   <p>Under the hood, IFT font encoding happens in three distinct stages separated by clean protobuf schemas. Stage 1 analyzes the font and builds a <code>SegmenterConfig</code>. Stage 2 runs the dependency graph analyzer and cost-based merger to produce a <code>SegmentationPlan</code>. Stage 3 compiles the plan and original font into the final WOFF2 initial font and patch files.</p>
+   <p>Under the hood, IFT font encoding happens in three distinct stages separated by protobuf schemas. Stage 1 analyzes the font and builds a <code>SegmenterConfig</code>. Stage 2 runs the dependency graph analyzer and cost-based merger to produce a <code>SegmentationPlan</code>. Stage 3 compiles the plan and original font into the final WOFF2 initial font and patch files.</p>
   </section>
 
   <!-- ====================================================================
@@ -143,8 +143,8 @@
      <h3>Primary Script</h3>
      <ul class="compact">
       <li><code>--auto_config_primary_script</code></li>
-      <li>Target script (e.g., <code>Script_japanese</code>).</li>
-      <li>Merges top glyphs into <strong>initial font</strong> &amp; splits clusters.</li>
+      <li>Target script or language (e.g., <code>Script_japanese</code>).</li>
+      <li>Merges top glyphs into <strong>initial font</strong> &amp; priotizes script when there are overlaps.</li>
      </ul>
     </section>
     <section>
@@ -159,7 +159,10 @@
   </section>
 
   <section class="comment">
-   <p>For most users, <code>font2ift</code> provides a single-command workflow. You give it an input font and output path, and it automatically generates a config, segments the font, and compiles the output. Two optional flags let you guide auto-configuration: <code>--auto_config_primary_script</code> and <code>--auto_config_quality</code>.</p>
+   <p>For most users, <code>font2ift</code> provides a single-command workflow. You give it an input font and output path, and it automatically generates a config, segments the font, and compiles the output. Two optional flags let you guide auto-configuration: <code>--auto_config_primary_script</code> and <code>--auto_config_quality</code>.
+     Setting a primary script tells the segmenter to prioritize that script when generating the plan: first the primary script is eligible to have it's codepoints moved into the init font if they are high probability, second
+     when there other other scripts overlapping the primary script, then the primary script takes precedence. It's cost is optimized first ahead of the non-primary scripts.
+   </p>
   </section>
 
   <!-- ====================================================================
@@ -214,7 +217,43 @@
   </section>
 
   <section class="comment">
-   <p><code>AutoSegmenterConfig::GenerateConfig</code> is responsible for five key tasks: detecting which scripts are present in the font, clustering overlapping scripts into merge groups, prioritizing the primary script, bounding the table-keyed patch graph size, and configuring quality/runtime tradeoffs.</p>
+   <p><code>AutoSegmenterConfig::GenerateConfig</code> is responsible for five key tasks: detecting which scripts are present in the font,
+     clustering overlapping scripts into merge groups,
+     prioritizing the primary script,
+     bounding the table-keyed patch graph size,
+     and configuring quality/runtime tradeoffs.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 8B: SEGMENTS & MERGE GROUPS
+  ===================================================================== -->
+  <section class="slide" id="merge-groups">
+   <h2>Segments &amp; Merge Groups</h2>
+   <div class="columns">
+    <section>
+     <h3>Segment</h3>
+     <ul class="compact">
+      <li>Grouping of <strong>codepoints + layout features</strong>.</li>
+      <li>Smallest unit the font can be extended by.</li>
+     </ul>
+     <h3>Merge Group</h3>
+     <ul class="compact">
+      <li>Partitions input segments.</li>
+      <li>No cross group merges allowed.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Why Isolate Groups?</h3>
+     <ul class="compact">
+      <li><strong>Script Separation:</strong> Keeps disjoint scripts (e.g. Latin, Cyrillic) separate.</li>
+      <li><strong>Bounds O(<var>n</var><sup>2</sup>) Search:</strong> Limits quadratic pair evaluation to each group.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Before looking at how scripts are detected and clustered, let's define two core concepts: a <strong>Segment</strong> is a grouping of Unicode codepoints and layout features that acts as the smallest unit the font can be extended by. A <strong>Merge Group</strong> partitions input segments into isolated subsets, where each group is optimized independently using its own frequency datasets. Isolating merge groups prevents cross-group merges, keeps disjoint scripts like Latin and Cyrillic separate, and bounds the quadratic O(<var>n</var><sup>2</sup>) candidate search to each individual group.</p>
   </section>
 
   <!-- ====================================================================
@@ -226,18 +265,16 @@
     <section>
      <h3>1. Script Detection</h3>
      <ul class="compact">
-      <li>Subtracts <code>non_cjk_common</code> (&ge; 2 non-CJK scripts).</li>
-      <li>Detects script if &gt; 1 unique codepoint remains.</li>
-      <li>Preserves CJK overlap so Han scripts stay active.</li>
+      <li>Look for &gt; 1 unique codepoints (not in other scripts)</li>
+      <li>CJK special cased due to high overlap.</li>
      </ul>
     </section>
     <section>
      <h3>2. Overlap Clustering</h3>
      <ul class="compact">
+      <li>Divides scripts into merge groups.</li>
       <li>Ignores spaces, controls &amp; combining marks.</li>
-      <li>Unions scripts with &ge; <strong>10%</strong> shared probability mass:
-       <br><var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub> &cap; <var>S</var><sub><var>j</var></sub>) / <var>P</var><sub><var>i</var></sub>(<var>S</var><sub><var>i</var></sub>) &ge; 0.10</li>
-      <li><strong><code>NotoSansJP</code>:</strong> <code>Hans+Hant+Jpan+Kore</code> (&gt; 98%).</li>
+      <li>Scripts with &ge; <strong>10%</strong> shared probability mass are placed in the same group.</li>
      </ul>
     </section>
    </div>
@@ -266,13 +303,13 @@
      </tr>
     </thead>
     <tbody>
-     <tr><td><strong>1 (MIN)</strong></td><td>No</td><td><em>Yes</em></td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
-     <tr><td><strong>2</strong></td><td>No</td><td>No</td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>54%</td><td>4.0%</td><td>4.0%</td></tr>
-     <tr><td><strong>3</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> (Est.)</td><td><code>0</code> (Est.)</td><td>48%</td><td>3.0%</td><td>3.0%</td></tr>
-     <tr><td><strong>4</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> (Est.)</td><td><strong><code>9</code></strong></td><td>42%</td><td>2.0%</td><td>2.0%</td></tr>
+     <tr><td><strong>1</strong></td><td>No</td><td><em>Yes</em></td><td><code>0</code> </td><td><code>0</code> </td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
+     <tr><td><strong>2</strong></td><td>No</td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>54%</td><td>4.0%</td><td>4.0%</td></tr>
+     <tr><td><strong>3</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>48%</td><td>3.0%</td><td>3.0%</td></tr>
+     <tr><td><strong>4</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><strong><code>9</code></strong></td><td>42%</td><td>2.0%</td><td>2.0%</td></tr>
      <tr><td><strong>5</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>9</code></strong></td><td><strong><code>9</code></strong></td><td>36%</td><td>1.0%</td><td>1.0%</td></tr>
      <tr><td><strong>6</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>9</code></td><td><strong><code>11</code></strong></td><td>30%</td><td>0.5%</td><td>0.5%</td></tr>
-     <tr><td><strong>7 (MAX)</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>11</code></strong></td><td><strong><code>11</code></strong></td><td>25%</td><td>0.5%</td><td>0.05%</td></tr>
+     <tr><td><strong>7</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>11</code></strong></td><td><strong><code>11</code></strong></td><td>25%</td><td>0.5%</td><td>0.05%</td></tr>
     </tbody>
    </table>
   </section>
@@ -288,33 +325,24 @@
    <h2>The Auto Quality Heuristic</h2>
    <div class="columns">
     <section>
-     <h3>Codepoint Bins</h3>
-     <table class="striped">
-      <thead>
-       <tr><th>Codepoints</th><th>Quality</th><th>&ge; 10 min</th></tr>
-      </thead>
-      <tbody>
-       <tr><td><code>1 – 300</code></td><td><strong>Q7</strong></td><td>0.3%</td></tr>
-       <tr><td><code>301 – 1,500</code></td><td><strong>Q6</strong></td><td>0.3%</td></tr>
-       <tr><td><code>1,501 – 3,100</code></td><td><strong>Q4</strong></td><td>0.0%</td></tr>
-       <tr><td><code>3,101 – 30,000</code></td><td><strong>Q2</strong></td><td>0.0%</td></tr>
-       <tr><td><code>&gt; 30,000</code></td><td><strong>Q1</strong></td><td>28.6%</td></tr>
-      </tbody>
-     </table>
+     <h3>Selection Criteria</h3>
+     <ul class="compact">
+      <li><code>f(<strong>number of codepoints</strong>) -> <strong>quality level</strong></code></li>
+      <li>Goal: <strong>99.5%</strong> of fonts take &lt; <strong>15 minutes</strong>.</li>
+     </ul>
     </section>
     <section>
      <h3>Limits &amp; Future Work</h3>
      <ul class="compact">
-      <li><strong>Limits:</strong> Complex <code>GSUB</code> (Arabic/Indic) can be slow.</li>
-      <li><strong>Time Budget:</strong> Sample Brotli &amp; closure speed.</li>
-      <li><strong>Per-Group Quality:</strong> Scale by condition complexity.</li>
+      <li><strong>Limits:</strong> doesn't account for high GSUB complexity.</li>
+      <li><strong>Time Budget:</strong> estimate brotli and dep graph cost for a font.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>When the user omits a quality flag, <code>AutoPickQuality</code> picks a default based on codepoint count, calibrated across the Google Fonts library so that for fonts up to 30,000 codepoints, fewer than 0.5% of runs exceed 10 minutes. In the future, we plan to evolve this into a time-budget estimator that samples Brotli/closure speed and factors in per-merge-group sizes and condition complexity.</p>
+   <p>When the user omits a quality flag, <code>AutoPickQuality</code> picks a default quality level as a function of the number of codepoints in the font, calibrated across the Google Fonts library so that fewer than 0.5% of fonts take longer than 15 minutes to segment. In the future, we plan to evolve this into a time-budget estimator that samples Brotli/closure speed and factors in per-merge-group sizes and condition complexity.</p>
   </section>
 
   <!-- ====================================================================
