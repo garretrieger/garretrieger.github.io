@@ -407,7 +407,7 @@
     <li><strong>Disjoint Patches:</strong> Every glyph outside <var>s</var><sub>0</sub> belongs to <strong>exactly one</strong> patch.</li>
    </ul>
    <h3>Closure Invariant</h3>
-   <p>For any subset <var>D</var>: &nbsp;<strong>Glyphs(<var>s</var><sub>0</sub>) &cup; &bigcup;<sub><var>c</var><sub><var>i</var></sub>(<var>D</var>) = true</sub> Glyphs(<var>p</var><sub><var>i</var></sub>) &nbsp;&supe;&nbsp; closure(Font, <var>D</var>)</strong></p>
+   <p>For any subset of codepoints and layout features, the glyphs in the initial font plus all matching patches must be a <strong>superset of the font subsetter's glyph closure</strong> for that subset.</p>
   </section>
 
   <section class="comment">
@@ -436,31 +436,18 @@
        SLIDE 16: CONDITION ANALYSIS MODES
   ===================================================================== -->
   <section class="slide" id="condition-analysis-modes">
-   <h2>Condition Analysis Modes</h2>
-   <div class="columns">
+   <h2>Condition Analysis</h2>
     <section>
-     <h3>1. Subsetter Closure (Legacy)</h3>
+     <h3>Via Dependency Graph</h3>
      <ul class="compact">
-      <li><var>I</var> = closure(<var>s</var><sub>0</sub> &cup; <var>s</var><sub><var>i</var></sub>) &setminus; closure(<var>s</var><sub>0</sub>)</li>
-      <li><var>D</var> = closure(All) &setminus; closure(All &setminus; <var>s</var><sub><var>i</var></sub>)</li>
-      <li><strong>Exclusive:</strong> <var>D</var> &cap; <var>I</var> &nbsp;·&nbsp; <strong>AND:</strong> <var>D</var> &setminus; <var>I</var> &nbsp;·&nbsp; <strong>OR:</strong> <var>I</var> &setminus; <var>D</var></li>
-      <li>Slow O(<var>n</var>) closures; misses composites.</li>
+      <li>Generate Exact CNF for each glyph: (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &and; (<var>s</var><sub>3</sub> &or; <var>s</var><sub>4</sub>).</li>
+      <li><strong>Quality 1 Simplify:</strong> reduced to pure AND/OR.</li>
      </ul>
     </section>
-    <section>
-     <h3>2. Dependency Graph (Default)</h3>
-     <ul class="compact">
-      <li>Single phased Tarjan SCC pass.</li>
-      <li>Exact CNF: (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &and; (<var>s</var><sub>3</sub> &or; <var>s</var><sub>4</sub>).</li>
-      <li>Fast <strong>incremental invalidation</strong> on merges.</li>
-      <li><strong>Q1 Simplify:</strong> Reduces to pure AND/OR.</li>
-     </ul>
-    </section>
-   </div>
   </section>
 
   <section class="comment">
-   <p>Originally, we inferred glyph conditions by treating HarfBuzz's subsetter closure as a black box—computing the full closure <var>A</var>, the closure without segment <var>s</var><sub><var>i</var></sub> (<var>B</var>), and the isolated closure of <var>s</var><sub><var>i</var></sub> (<var>I</var>). Today, our default approach is <code>DEP_GRAPH_ONLY</code>, which builds an explicit dependency graph directly from the font's tables.</p>
+   <p>Originally, we inferred glyph conditions by probing HarfBuzz's subsetter closure. Today, our default approach is <code>DEP_GRAPH_ONLY</code>, which builds an explicit dependency graph directly from the font's tables. That dependency graph is then analyzed to produce the conditions under which each glyph is needed (in terms of segments).</p>
   </section>
 
   <!-- ====================================================================
@@ -469,39 +456,37 @@
   <section class="slide" id="dependency-graph-nodes">
    <h2>Dependency Graph: Node Types</h2>
    <figure>
-    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 770 155" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
-     <rect x="6" y="40" width="150" height="72" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="81" y="65" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
-     <text x="81" y="85" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Entry point per segment s_i</text>
-     <text x="81" y="102" text-anchor="middle" fill="var(--slide-fg)" font-size="11">codepoints + features</text>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 770 180" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
+     <rect x="6" y="66" width="150" height="72" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="81" y="91" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
+     <text x="81" y="111" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">codepoints + features</text>
 
-     <line x1="156" y1="62" x2="202" y2="42" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="156" y1="92" x2="202" y2="115" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="156" y1="88" x2="202" y2="68" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="156" y1="118" x2="202" y2="141" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <rect x="206" y="6" width="212" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
-     <text x="312" y="28" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Unicode Codepoint Node</text>
-     <text x="312" y="47" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Unicode decomp/comp &amp; bidi</text>
-     <text x="312" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• cmap nominal &amp; cmap 14 UVS</text>
+     <rect x="206" y="32" width="212" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="312" y="54" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Unicode Codepoint Node</text>
+     <text x="312" y="73" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Unicode decomp/comp &amp; bidi</text>
+     <text x="312" y="90" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• cmap nominal &amp; cmap 14 UVS</text>
+     <path d="M 285 32 C 272 4, 352 4, 339 28" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <rect x="206" y="86" width="212" height="62" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
-     <text x="312" y="108" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Feature Node</text>
-     <text x="312" y="126" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Non-default OpenType tags</text>
-     <text x="312" y="141" text-anchor="middle" fill="var(--slide-fg)" font-size="11">(e.g. 'smcp', 'swsh', 'dlig')</text>
+     <rect x="206" y="112" width="212" height="62" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="312" y="134" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Feature Node</text>
+     <text x="312" y="152" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Non-default OpenType tags</text>
+     <text x="312" y="167" text-anchor="middle" fill="var(--slide-fg)" font-size="11">(e.g. 'smcp', 'swsh', 'dlig')</text>
 
-     <line x1="418" y1="42" x2="466" y2="65" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="418" y1="118" x2="466" y2="92" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="418" y1="68" x2="466" y2="91" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="418" y1="144" x2="466" y2="118" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
 
-     <rect x="470" y="22" width="228" height="108" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
-     <text x="584" y="46" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node (GID)</text>
-     <text x="584" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• GSUB (Single, Alternate, Ligature,</text>
-     <text x="584" y="84" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">  Contextual / Chaining Subst)</text>
-     <text x="584" y="104" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• glyf composites, COLR, MATH</text>
-     <path d="M 698 56 C 742 43, 742 108, 698 95" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <text x="738" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="11">GID→GID</text>
+     <rect x="470" y="48" width="228" height="108" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="584" y="72" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node</text>
+     <text x="584" y="93" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• GSUB, glyf, CFF, COLR, MATH</text>
+     <path d="M 698 82 C 742 69, 742 134, 698 121" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
     </svg>
    </figure>
    <ul class="compact">
-    <li>Unifies Segment, Unicode (canonical decomp/comp &amp; bidi), Feature, and Glyph dependencies into one directed graph.</li>
+    <li>Unifies Segment, Unicode , Feature, and Glyph dependencies into one directed graph.</li>
+    <li>Glyph to glyph sourced from harfbuzz dependency graph API.</li>
    </ul>
   </section>
 
