@@ -39,7 +39,7 @@
    <ol class="compact">
     <li><strong>Pipeline &amp; Workflows:</strong> Auto config, segmenter, compiler</li>
     <li><strong>Automatic Configuration:</strong> Script clustering, quality levels (1–7)</li>
-    <li><strong>Dependency Graph &amp; Conditions:</strong> Closure, Tarjan SCC, CNF</li>
+    <li><strong>Dependency Graph &amp; Conditions:</strong> Closure, condition propagation, CNF</li>
     <li><strong>Cost-Based Merging:</strong> Expected bytes, bigram bounds, multi-script <var>P</var><sub>agg</sub></li>
     <li><strong>Key Optimizations:</strong> Best-case pruning, cutoffs, inert segments, caching</li>
     <li><strong>The IFT Compiler:</strong> Table-keyed patch DAG, prefetch lists, OpenType rules</li>
@@ -373,6 +373,11 @@
     </section>
     <figure>
      <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 380 210" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
+      <defs>
+       <marker id="arrow-seg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+       </marker>
+      </defs>
       <rect x="10" y="12" width="150" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
       <text x="85" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 1: {gid_f}</text>
       <text x="85" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0066 'f')</text>
@@ -381,8 +386,8 @@
       <text x="295" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 2: {gid_i}</text>
       <text x="295" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0069 'i')</text>
 
-      <line x1="85" y1="77" x2="165" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-      <line x1="295" y1="77" x2="215" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+      <line x1="85" y1="77" x2="165" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-seg)"/>
+      <line x1="295" y1="77" x2="215" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-seg)"/>
 
       <rect x="70" y="130" width="240" height="68" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
       <text x="190" y="155" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 3: {gid_fi} (Ligature)</text>
@@ -457,31 +462,36 @@
    <h2>Dependency Graph: Node Types</h2>
    <figure>
     <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 770 180" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
+     <defs>
+      <marker id="arrow-nodes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
      <rect x="6" y="66" width="150" height="72" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="81" y="91" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
      <text x="81" y="111" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">codepoints + features</text>
 
-     <line x1="156" y1="88" x2="202" y2="68" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="156" y1="118" x2="202" y2="141" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="156" y1="88" x2="202" y2="68" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+     <line x1="156" y1="118" x2="202" y2="141" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
 
      <rect x="206" y="32" width="212" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
      <text x="312" y="54" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Unicode Codepoint Node</text>
      <text x="312" y="73" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Unicode decomp/comp &amp; bidi</text>
      <text x="312" y="90" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• cmap nominal &amp; cmap 14 UVS</text>
-     <path d="M 285 32 C 272 4, 352 4, 339 28" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <path d="M 285 32 C 272 4, 352 4, 339 28" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
 
      <rect x="206" y="112" width="212" height="62" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
      <text x="312" y="134" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Feature Node</text>
      <text x="312" y="152" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Non-default OpenType tags</text>
      <text x="312" y="167" text-anchor="middle" fill="var(--slide-fg)" font-size="11">(e.g. 'smcp', 'swsh', 'dlig')</text>
 
-     <line x1="418" y1="68" x2="466" y2="91" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
-     <line x1="418" y1="144" x2="466" y2="118" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="418" y1="68" x2="466" y2="91" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+     <line x1="418" y1="144" x2="466" y2="118" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
 
      <rect x="470" y="48" width="228" height="108" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="584" y="72" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node</text>
      <text x="584" y="93" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• GSUB, glyf, CFF, COLR, MATH</text>
-     <path d="M 698 82 C 742 69, 742 134, 698 121" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <path d="M 698 82 C 742 69, 742 134, 698 121" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
     </svg>
    </figure>
    <ul class="compact">
@@ -491,7 +501,7 @@
   </section>
 
   <section class="comment">
-   <p>The <code>DependencyGraph</code> class unifies four types of nodes into one graph: <code>Segment</code> nodes act as the entry points; they point to <code>Unicode Codepoint</code> nodes and <code>Feature</code> nodes. Codepoint nodes have edges to other codepoints (modeling Unicode canonical decomposition, composition, and bidi mirroring) and to <code>Glyph</code> nodes via <code>cmap</code> and <code>cmap 14</code> UVS subtables. Finally, <code>Glyph</code> nodes have outgoing edges to other glyphs derived from <code>GSUB</code>, <code>COLR</code>, <code>MATH</code>, and <code>glyf</code> composite references.</p>
+   <p>The <code>Dependency Graph</code> class unifies four types of nodes into one graph: <code>Segment</code> nodes act as the entry points; they point to <code>Unicode Codepoint</code> nodes and <code>Feature</code> nodes. Codepoint nodes have edges to other codepoints (modeling Unicode canonical decomposition, composition, and bidi mirroring) and to <code>Glyph</code> nodes via <code>cmap</code> and <code>cmap 14</code> UVS subtables. Finally, <code>Glyph</code> nodes have outgoing edges to other glyphs derived from <code>GSUB</code>, <code>COLR</code>, <code>MATH</code>, and <code>glyf</code> composite references.</p>
   </section>
 
   <!-- ====================================================================
@@ -531,54 +541,281 @@
   </section>
 
   <!-- ====================================================================
-       SLIDE 19: TRAVERSAL MODES & CLOSURE PHASING
+       SLIDE 20A: CONDITION EXTRACTION EXAMPLE - STEP 1 (ENTRY SEGMENTS)
   ===================================================================== -->
-  <section class="slide" id="dependency-graph-phasing">
-   <h2>Graph Traversal &amp; Closure Phasing</h2>
-   <div class="columns">
-    <section>
-     <h3>Two Traversal Modes</h3>
-     <ul class="compact">
-      <li><strong>Enforced Context:</strong> Traverses <var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var> only when <var>u</var> <em>and all of <var>C</var></em> are reached (matches HarfBuzz closure).</li>
-      <li><strong>Non-Enforced Context:</strong> Ignores <var>C</var>; finds all reachable glyphs for incremental updates.</li>
-     </ul>
-    </section>
-    <section>
-     <h3>Strict Closure Phasing</h3>
-     <ol class="compact">
-      <li>Segment &rarr; Codepoint/Feature + Unicode closure</li>
-      <li><code>cmap</code> nominal &amp; <code>cmap 14</code> UVS</li>
-      <li><code>GSUB</code> lookups &amp; <code>MATH</code> / <code>COLR</code></li>
-      <li><code>glyf</code> composite components</li>
-     </ol>
-     <p class="note">Prevents <code>glyf</code> components from falsely triggering <code>GSUB</code>.</p>
-    </section>
-   </div>
+  <section class="slide" id="condition-extraction-step1">
+   <h2>Condition Extraction: Entry Segments</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 1: entry segments initialized with s_1 and s_2">
+     <defs>
+      <marker id="arrow-s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li>Initialize each entry <strong>Segment Node</strong> with its own segment condition (<var>s</var><sub>1</sub>, <var>s</var><sub>2</sub>).</li>
+    <li>Propagate conditions forward in topological order from left to right.</li>
+   </ul>
   </section>
 
   <section class="comment">
-   <p>A critical subtlety of OpenType subsetting is that HarfBuzz's glyph closure is phased: composite glyphs in the <code>glyf</code> table pull in their component glyphs *after* <code>GSUB</code> substitutions have finished, so a component glyph pulled in by a composite won't itself trigger new <code>GSUB</code> rules. Our dependency graph mirrors this exact phasing.</p>
+   <p>Let's step through a simple example of how activation conditions are extracted from the dependency graph. We start by assigning each entry Segment node its own identity condition—here segment <var>s</var><sub>1</sub> gets condition <var>s</var><sub>1</sub> and segment <var>s</var><sub>2</sub> gets condition <var>s</var><sub>2</sub>—and then propagate conditions forward through the graph.</p>
   </section>
 
   <!-- ====================================================================
-       SLIDE 20: CONDITION EXTRACTION VIA TARJAN'S SCC ALGORITHM
+       SLIDE 20B: CONDITION EXTRACTION EXAMPLE - STEP 2 (DISJUNCTIVE EDGES)
   ===================================================================== -->
-  <section class="slide" id="condition-extraction-algorithm">
-   <h2>Condition Extraction via Tarjan's SCC</h2>
-   <ol class="compact">
-    <li><strong>Initialize:</strong> <var>s</var><sub>0</sub> nodes &rarr; <code>True</code>; Segment nodes <var>s</var><sub><var>i</var></sub> &rarr; <code>exclusive(s_i)</code>.</li>
-    <li><strong>Find SCCs:</strong> Run <strong>Tarjan's SCC algorithm</strong> on the active phase subgraph to emit components in <strong>topological order</strong>.</li>
-    <li><strong>Propagate Conditions:</strong>
-     <ul class="compact">
-      <li><strong>Single-Node SCC (|<var>C</var>| = 1):</strong> Join edge contexts via <code>And()</code>, join incoming edges via <code>Or()</code>, and normalize to CNF.</li>
-      <li><strong>Multi-Node SCC (|<var>C</var>| &gt; 1, cyclic <code>GSUB</code>):</strong> Iterate <code>And</code>/<code>Or</code> propagation around the cycle until reaching a <strong>fixed point</strong>.</li>
-     </ul>
-    </li>
-   </ol>
+  <section class="slide" id="condition-extraction-step2">
+   <h2>Condition Extraction: Disjunctive</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 2: glyphs g_1 and g_2 receive conditions s_1 and s_2">
+     <defs>
+      <marker id="arrow-s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s2)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s2)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Single Disjunctive Edge:</strong> Passes the parent node's condition directly to the target node.</li>
+    <li><var>g</var><sub>1</sub> receives <var>s</var><sub>1</sub>; <var>g</var><sub>2</sub> receives <var>s</var><sub>2</sub>.</li>
+   </ul>
   </section>
 
   <section class="comment">
-   <p>Within each closure phase, we run Tarjan's Strongly Connected Components algorithm, which emits SCCs in topological order. For single-node SCCs, we compute its condition once by joining its parents' conditions. If a font has cycles in its <code>GSUB</code> rules (a multi-node SCC), we iterate around the SCC until the boolean conditions reach a fixed point.</p>
+   <p>Next, we propagate along the single disjunctive edges from the entry segments to <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub>. Because each node has one incoming disjunctive edge, <var>g</var><sub>1</sub> inherits condition <var>s</var><sub>1</sub> and <var>g</var><sub>2</sub> inherits condition <var>s</var><sub>2</sub>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20C: CONDITION EXTRACTION EXAMPLE - STEP 3 (CONJUNCTIVE EDGE)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step3">
+   <h2>Condition Extraction: Conjunctive</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 3: glyph g_3 receives conjunctive condition s_1 AND s_2">
+     <defs>
+      <marker id="arrow-s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s3)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace" font-weight="bold">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∧ s₂</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Conjunctive Edge (<code>AND</code>):</strong> Joins the source node condition with all context node conditions.</li>
+    <li><var>g</var><sub>3</sub> receives <code>And(Cond(g₁), Cond(g₂)) = s₁ &and; s₂</code>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Next, we evaluate the conjunctive edge from <var>g</var><sub>1</sub> to <var>g</var><sub>3</sub>, which carries context <code>{g₂}</code>. We join the source condition (<var>s</var><sub>1</sub>) with the context condition (<var>s</var><sub>2</sub>) using <code>And()</code>, assigning <code>s₁ &and; s₂</code> to <var>g</var><sub>3</sub>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20D: CONDITION EXTRACTION EXAMPLE - STEP 4 (MULTIPLE INCOMING)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step4">
+   <h2>Condition Extraction: Multiple Parents</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 4: glyph g_4 receives disjunctive condition s_1 OR s_2">
+     <defs>
+      <marker id="arrow-s4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s4)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s4)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁ ∧ s₂</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Multiple Incoming Edges (<code>OR</code>):</strong> Joins incoming edge conditions via disjunction.</li>
+    <li><var>g</var><sub>4</sub> receives <code>Or(Cond(g₁), Cond(g₂)) = s₁ &or; s₂</code>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>When a node has multiple incoming edges—like <var>g</var><sub>4</sub> reachable from both <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub>—we join the incoming edge conditions with <code>Or()</code>, yielding <code>s₁ &or; s₂</code>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20E: CONDITION EXTRACTION EXAMPLE - STEP 5 (CYCLES)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-cycles">
+   <h2>Condition Extraction: Cycles</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 190" role="img" aria-label="Condition extraction with a cycle between g_1 and g_2 resolved via SCC fixed-point iteration">
+     <defs>
+      <marker id="arrow-cyc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="18" width="165" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="97" y="43" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="97" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="108" width="165" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="97" y="133" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="97" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="180" y1="50" x2="258" y2="50" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+     <line x1="180" y1="140" x2="258" y2="140" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+
+     <rect x="245" y="4" width="245" height="180" rx="10" fill="none" stroke="var(--h3-fg)" stroke-width="1.5" stroke-dasharray="6,4"/>
+     <text x="480" y="20" text-anchor="end" fill="var(--h3-fg)" font-size="11" font-weight="bold">SCC (Cycle)</text>
+
+     <rect x="263" y="18" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="350" y="43" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="350" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+
+     <rect x="263" y="108" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="350" y="133" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="350" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+
+     <line x1="330" y1="83" x2="330" y2="103" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-cyc)"/>
+     <line x1="370" y1="108" x2="370" y2="88" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-cyc)"/>
+
+     <line x1="438" y1="140" x2="555" y2="140" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+
+     <rect x="560" y="108" width="180" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="650" y="133" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="650" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁ ∨ s₂</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Tarjan's SCC Algorithm:</strong> Groups cyclic nodes into Strongly Connected Components in topological order.</li>
+    <li><strong>Fixed-Point Iteration:</strong> Repeatedly propagates and <code>Or()</code>s conditions around the cycle until no node's condition changes.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>What if the dependency graph contains a cycle—for example, when contextual <code>GSUB</code> rules substitute <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub> into each other? We run Tarjan's Strongly Connected Components (SCC) algorithm to identify cycles and process SCCs in topological order. Within a multi-node SCC, we iteratively propagate conditions around the cycle using <code>Or()</code> until reaching a fixed point where no node's condition changes, before continuing to downstream nodes like <var>g</var><sub>3</sub>.</p>
   </section>
 
   <!-- ====================================================================
@@ -593,7 +830,6 @@
      <ul class="compact">
       <li>Drops any clause <var>C</var><sub><var>j</var></sub> where <var>C</var><sub><var>i</var></sub> &sube; <var>C</var><sub><var>j</var></sub>:
        <br>(<var>s</var><sub>1</sub>) &and; (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &nbsp;&rArr;&nbsp; (<var>s</var><sub>1</sub>)</li>
-      <li>Sorted for canonical hashing &amp; equality.</li>
      </ul>
     </section>
     <section>
@@ -601,14 +837,13 @@
      <ul class="compact">
       <li><strong><code>Or(A, B)</code> Factoring:</strong> Extracts shared clauses <var>I</var> before cross-multiplying:
        <br>(<var>I</var> &and; <var>A&prime;</var>) &or; (<var>I</var> &and; <var>B&prime;</var>) = <var>I</var> &and; (<var>A&prime;</var> &or; <var>B&prime;</var>)</li>
-      <li><strong><code>NonCompositeSuperset()</code>:</strong> Reduces to pure AND or OR.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>We represent every <code>ActivationCondition</code> in monotonic Conjunctive Normal Form (CNF) and simplify via clause subsumption: if clause <var>A</var> is a subset of clause <var>B</var>, <var>B</var> is redundant and dropped. When computing <code>Or(A, B)</code>, we avoid exponential blowup by factoring out identical clauses shared between <var>A</var> and <var>B</var> in a single linear pass before taking the cross product of the remaining clauses.</p>
+   <p>We represent every <code>ActivationCondition</code> in monotonic Conjunctive Normal Form (CNF) and simplify via clause subsumption: if clause <var>A</var> is a subset of clause <var>B</var>, <var>B</var> is redundant and dropped. When computing <code>Or(A, B)</code>, we reduce exponential blowup by factoring out identical clauses shared between <var>A</var> and <var>B</var> in a single linear pass before taking the cross product of the remaining clauses.</p>
   </section>
 
   <!-- ====================================================================
@@ -1113,6 +1348,11 @@
    <h2>The Table-Keyed Patch Graph (DAG)</h2>
    <figure>
     <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 160" role="img" aria-label="Table-keyed patch graph DAG showing nodes A, A+B, A+C, and A+B+C">
+     <defs>
+      <marker id="arrow-dag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
      <rect x="8" y="50" width="140" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
      <text x="78" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Init Node: {A}</text>
      <text x="78" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Initial IFT Font</text>
@@ -1129,19 +1369,19 @@
      <text x="666" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Node: {A + B + C}</text>
      <text x="666" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Full Non-Outline Font</text>
 
-     <line x1="148" y1="66" x2="280" y2="34" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="148" y1="66" x2="280" y2="34" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
      <text x="210" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
 
-     <line x1="148" y1="94" x2="280" y2="125" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="148" y1="94" x2="280" y2="125" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
      <text x="210" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
 
-     <line x1="445" y1="34" x2="575" y2="66" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="445" y1="34" x2="575" y2="66" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
      <text x="515" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
 
-     <line x1="445" y1="125" x2="575" y2="94" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow)"/>
+     <line x1="445" y1="125" x2="575" y2="94" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
      <text x="515" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
 
-     <line x1="148" y1="80" x2="575" y2="80" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+     <line x1="148" y1="80" x2="575" y2="80" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-dag)"/>
      <text x="365" y="75" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5" font-weight="bold">Jump Ahead 2: +B+C (1 RT via Prefetch List)</text>
     </svg>
    </figure>
