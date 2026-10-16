@@ -873,9 +873,9 @@
    <div>
     <h3>Pros vs. Cons</h3>
     <ul class="compact">
-     <li><strong>Fewer Requests:</strong> Saves HTTP/framing overhead.</li>
-     <li><strong>Better Brotli:</strong> Shared outline patterns compress together.</li>
-     <li><strong>Smaller Patch Maps:</strong> Fewer <code>IFT </code>/<code>IFTX</code> entries.</li>
+     <li>Fewer Requests</li>
+     <li>Better Brotli</li>
+     <li>Smaller Patch Maps</li>
      <li><strong>Risk:</strong> Merging rare + common glyphs wastes bandwidth!</li>
     </ul>
    </div>
@@ -891,10 +891,10 @@
   <section class="slide" id="cost-function">
    <h2>The Segmentation Cost Function</h2>
    <p>Expected bytes transferred for a random page view:</p>
-   <p><strong>cost(<var>S</var>) &nbsp;=&nbsp; size(<var>F</var><sub>init</sub>) &nbsp;+&nbsp; &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center"><strong>cost(<var>S</var>) &nbsp;=&nbsp; size(<var>F</var><sub>init</sub>) &nbsp;+&nbsp; &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
    <ul>
     <li><strong><var>P</var>(<var>c</var><sub><var>i</var></sub>) &isin; [0, 1]:</strong> Probability condition <var>c</var><sub><var>i</var></sub> is triggered on a random page.</li>
-    <li><strong>size(<var>p</var><sub><var>i</var></sub>):</strong> Brotli-compressed byte size of patch <var>p</var><sub><var>i</var></sub> (captures outline synergy).</li>
+    <li><strong>size(<var>p</var><sub><var>i</var></sub>):</strong> Brotli-compressed byte size of patch <var>p</var><sub><var>i</var></sub></li>
     <li><strong><var>k</var> = 200 bytes:</strong> Fixed network overhead per patch request.</li>
    </ul>
   </section>
@@ -908,21 +908,19 @@
   ===================================================================== -->
   <section class="slide" id="cost-deltas">
    <h2>Assessing Candidate Merges (&Delta;cost)</h2>
-   <p><strong>&Delta;cost &nbsp;=&nbsp; &sum;<sub><var>p</var> &isin; Added &cup; Mod</sub> <var>P</var>(<var>c&prime;</var><sub><var>p</var></sub>)(size(<var>p&prime;</var>) + <var>k</var>) &nbsp;&minus;&nbsp; &sum;<sub><var>p</var> &isin; Removed &cup; Mod</sub> <var>P</var>(<var>c</var><sub><var>p</var></sub>)(size(<var>p</var>) + <var>k</var>)</strong></p>
    <div class="columns">
     <section>
-     <h3>Localized Effects</h3>
+     <h3>Merge Effects</h3>
      <ul class="compact">
-      <li>Combines exclusive patches.</li>
-      <li>Moves interaction glyphs between patches.</li>
-      <li>Updates segment IDs in CNF clauses.</li>
+      <li>Combines patches.</li>
+      <li>Modifies condition CNF clauses.</li>
+      <li><code>&Delta;cost = cost(after) - cost(before)</code> for all modified</li>
      </ul>
     </section>
     <section>
      <h3>Greedy Merge Loop</h3>
      <ul class="compact">
-      <li>Find touched patches via inverted index.</li>
-      <li>Pick pair with <strong>lowest &Delta;cost &lt; 0</strong>.</li>
+      <li>Pick merge with <strong>lowest &Delta;cost &lt; 0</strong>.</li>
       <li>Repeat until no &Delta;cost &lt; 0 remains.</li>
      </ul>
     </section>
@@ -930,7 +928,8 @@
   </section>
 
   <section class="comment">
-   <p>Because total cost is a sum over independent patches, we use an inverted index (<code>TriggeringSegmentToConditions</code>) to find only the patches touched by a candidate merge, subtract their old cost contribution, and add back their new cost contribution. Any merge with &Delta;cost &lt; 0 reduces expected network transfer.</p>
+   <p>Because total cost is a sum over independent patches, we use an inverted index (<code>TriggeringSegmentToConditions</code>) to find only the patches touched by a candidate merge,
+     subtract their old cost contribution, and add back their new cost contribution. Any merge with &Delta;cost &lt; 0 reduces expected network transfer. Iteratively select and apply the most negative available merge.</p>
   </section>
 
   <!-- ====================================================================
@@ -942,17 +941,17 @@
     <section>
      <h3>1. Segment Merge</h3>
      <ul class="compact">
-      <li><strong><var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>:</strong> Unions input segments and updates conditions.</li>
+      <li><strong><var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>:</strong></li>
       <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Collapses <code>{f}</code>, <code>{i}</code>, <code>{fi}</code> into one exclusive patch <code>{f, i, fi}</code>!</li>
-      <li>Best for exclusive patches &amp; folding ligatures.</li>
+      <li>Impacts any conditions the base segments appear in</li>
      </ul>
     </section>
     <section>
      <h3>2. Patch Merge</h3>
      <ul class="compact">
-      <li><strong><var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub>:</strong> Directly unions two patches with <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
+      <li><strong><var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub></strong>, <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
       <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Forms <code>{f, i}</code> under <code>(f OR i)</code>; leaves <code>{fi}</code> untouched!</li>
-      <li>Best for non-exclusive patches.</li>
+      <li>More granular, useful for complex conditions.</li>
      </ul>
     </section>
    </div>
@@ -980,7 +979,6 @@
      <ul class="compact">
       <li>Tests segments above probability cutoff (25%–60%).</li>
       <li>Accepts move if &Delta;cost<sub>init</sub> &lt; &minus;0.8<var>k</var> (&minus;160 B).</li>
-      <li>Unmapped/fallback glyphs default to <var>s</var><sub>0</sub>.</li>
      </ul>
     </section>
    </div>
@@ -999,18 +997,17 @@
     <section>
      <h3>1. Unigrams (Quality 1–2)</h3>
      <ul class="compact">
-      <li>Single-codepoint <var>P</var>(<var>a</var>); assumes <strong>independence</strong>:
-       <br><var>P</var>(&or; <var>a</var><sub><var>i</var></sub>) = 1 &minus; &prod; (1 &minus; <var>P</var>(<var>a</var><sub><var>i</var></sub>))</li>
-      <li><strong>Pros:</strong> Fast O(<var>k</var>); 1.5 MB dataset.</li>
-      <li><strong>Cons:</strong> Overestimates unions <var>P</var>(<var>a</var> &cup; <var>b</var>) on correlated text.</li>
+      <li>Single-codepoint <var>P</var>(<var>a</var>); assumes <strong>independence</strong></li>
+      <li><strong>Pros:</strong> Fast O(<var>k</var>) dataset.</li>
+      <li><strong>Cons:</strong> Overestimates unions <var>P</var>(<var>a</var> &cup; <var>b</var>) on correlated code points.</li>
      </ul>
     </section>
     <section>
      <h3>2. Bigrams (Quality 3–7)</h3>
      <ul class="compact">
-      <li>Pairwise co-occurrence <var>P</var>(<var>a</var> &cap; <var>b</var>) (696 MB dataset).</li>
-      <li><strong>Captures correlation</strong> (e.g., <code>q</code>+<code>u</code>, Kanji pairs).</li>
-      <li>Computes tight <strong>Bounds [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>]</strong> for <var>k</var> &ge; 3!</li>
+      <li>Pairwise co-occurrence <var>P</var>(<var>a</var> &cap; <var>b</var>)</li>
+      <li><strong>Captures correlation</strong></li>
+      <li>Computes <strong>Bounds [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>]</strong> for <var>k</var> &ge; 3</li>
      </ul>
     </section>
    </div>
@@ -1025,47 +1022,37 @@
   ===================================================================== -->
   <section class="slide" id="probability-bounds">
    <h2>Bigram Probability Bounds</h2>
-   <p>Let <var>S</var><sub>1</sub> = &sum; <var>P</var>(<var>a</var><sub><var>i</var></sub>), &nbsp;<var>S</var><sub>2</sub> = &sum;<sub><var>i</var>&lt;<var>j</var></sub> <var>P</var>(<var>a</var><sub><var>i</var></sub> &cap; <var>a</var><sub><var>j</var></sub>), and <var>k</var><sup>*</sup> = &lfloor;2<var>S</var><sub>2</sub> / <var>S</var><sub>1</sub>&rfloor; + 1:</p>
-   <div class="columns">
-    <section>
-     <h3>1. Unions (Dawson–Sankoff)</h3>
-     <ul class="compact">
-      <li><strong>Lower (<var>P</var><sub>min</sub>):</strong><br>[2/(<var>k</var><sup>*</sup>+1)] <var>S</var><sub>1</sub> &minus; [2/(<var>k</var><sup>*</sup>(<var>k</var><sup>*</sup>+1))] <var>S</var><sub>2</sub></li>
-      <li><strong>Upper (<var>P</var><sub>max</sub>):</strong><br>min(1.0, &nbsp;<var>S</var><sub>1</sub> &minus; (2/<var>n</var>) <var>S</var><sub>2</sub>)</li>
-     </ul>
-    </section>
-    <section>
-     <h3>2. Intersections (Fréchet)</h3>
-     <ul class="compact">
-      <li><strong>Lower:</strong> max(0, &sum; <var>P</var><sub>min</sub>(<var>C</var><sub><var>j</var></sub>) &minus; (<var>m</var>&minus;1))</li>
-      <li><strong>Upper:</strong> min<sub><var>j</var></sub> <var>P</var><sub>max</sub>(<var>C</var><sub><var>j</var></sub>)</li>
-      <li><strong>Midpoint:</strong> <var>P</var>(<var>c</var><sub><var>i</var></sub>) = &frac12;(<var>P</var><sub>min</sub> + <var>P</var><sub>max</sub>)</li>
-     </ul>
-    </section>
-   </div>
+   <section>
+   <ul class="compact">
+     <li>Utilizes <a href="https://projecteuclid.org/journals/annals-of-mathematical-statistics/volume-39/issue-6/Bounds-for-the-Probability-of-a-Union-with-Applications/10.1214/aoms/1177698049.full">
+     Bounds for the Probability of a Union, with Applications</a></li>
+     <li>For cost function use average of bound</li>
+   </section>
   </section>
 
   <section class="comment">
-   <p>For a union of codepoints, we compute the sum of single probabilities <var>S</var><sub>1</sub> and pairwise probabilities <var>S</var><sub>2</sub>, and plug them into Formulas 3 and 4 from Kwerel (1975) / Dawson–Sankoff, which give the provably tightest lower and upper bounds using degree-2 marginals. For conjunctions across clauses, we use Fréchet bounds and take the midpoint.</p>
+   <p>For a union of codepoints we use the approach from "Bounds for the Probability of a Union, with Applications" to compute probability bounds using the unigram and bigram probabilities. When computing costs we need to
+     convert the bounds into a single value. We currently use the average of upper and lower based as that seemed to perform best in experiments.
+   </p>
   </section>
 
   <!-- ====================================================================
        SLIDE 30: MULTI-SCRIPT FONTS & MERGE GROUP ISOLATION
   ===================================================================== -->
   <section class="slide" id="multi-script-isolation">
-   <h2>Multi-Script Fonts &amp; Merge Group Isolation</h2>
+   <h2>Multi-Script Fonts</h2>
    <div class="columns">
     <section>
      <h3>Challenges</h3>
      <ul class="compact">
-      <li><strong>No Cross-Script Bigrams:</strong> Pair counts are collected per script.</li>
+      <li>No Cross-Script Bigrams.</li>
       <li><strong>Shared Codepoints:</strong> CJK languages share Han ideographs at different frequencies.</li>
      </ul>
     </section>
     <section>
      <h3>Design Principles</h3>
      <ul class="compact">
-      <li><strong>Equal Script Weighting:</strong> Every script weighted equally (no global traffic bias).</li>
+      <li><strong>Equal Script Weighting:</strong> No global traffic bias.</li>
       <li><strong>Isolated Merge Groups:</strong> Disjoint scripts merge independently, bounding O(<var>n</var><sup>2</sup>) search.</li>
      </ul>
     </section>
@@ -1081,49 +1068,17 @@
   ===================================================================== -->
   <section class="slide" id="multi-dataset-cost">
    <h2>Multi-Dataset Cost &amp; <var>P</var><sub>agg</sub> Factoring</h2>
-   <p>Unweighted sum across <var>M</var> profiles in a group (e.g. <var>M</var> = 4 for CJK):</p>
-   <p><strong>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <p>Unweighted sum across <var>M</var> frequency data sets in a merge group:</p>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center"><strong>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
    <h3>Linearity Optimization</h3>
    <ul class="compact">
     <li>size(<var>p</var><sub><var>i</var></sub>) and <var>k</var> are identical across all <var>M</var> datasets:
      <br><strong>&sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &nbsp;=&nbsp; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &times; <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>)</strong></li>
-    <li>Summing <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) = &sum; <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) first avoids <var>M</var>&times; redundant patch size lookups!</li>
    </ul>
   </section>
 
   <section class="comment">
    <p>Inside a multi-script merge group like CJK (<var>M</var> = 4), a patch's compressed size size(<var>p</var><sub><var>i</var></sub>) and network overhead <var>k</var> do not depend on the language dataset. By factoring (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) out of the sum, we sum the condition probabilities across the <var>M</var> calculators to get <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) and multiply by the patch size once.</p>
-  </section>
-
-  <!-- ====================================================================
-       SLIDE 32: PRIORITIZING A PRIMARY SCRIPT & MERGE GROUP SPLITTING
-  ===================================================================== -->
-  <section class="slide" id="primary-script-priority">
-   <h2>Prioritizing a Primary Script</h2>
-   <div class="columns">
-    <section>
-     <h3>1. Scoped Initial Font</h3>
-     <ul class="compact">
-      <li>Only the primary script's profile sets <code>initial_font_merge_threshold</code>.</li>
-      <li>Secondary scripts never force glyphs into <var>s</var><sub>0</sub>.</li>
-     </ul>
-    </section>
-    <section>
-     <h3>2. Cluster Splitting</h3>
-     <ul class="compact">
-      <li>Splits CJK into two disjoint groups:
-       <ol class="compact">
-        <li><strong>Primary (<code>Japanese</code>):</strong> 100% Japanese weights.</li>
-        <li><strong>Secondary (<code>Hans+Hant+Korean</code>):</strong> Remaining CJK codepoints.</li>
-       </ol>
-      </li>
-     </ul>
-    </section>
-   </div>
-  </section>
-
-  <section class="comment">
-   <p>When a user explicitly specifies a primary script like <code>Script_japanese</code> on a CJK font, only the Japanese profile is allowed to move glyphs into the initial font, and <code>AutoSegmenterConfig</code> splits the CJK cluster into two disjoint groups: one covering all codepoints in Japanese, and a second for the remaining CJK codepoints.</p>
   </section>
 
   <!-- ====================================================================
@@ -1135,8 +1090,7 @@
     <section>
      <h3>Minimum Group Size (Privacy)</h3>
      <ul class="compact">
-      <li>Enforces <code>min_group_size = 4</code> per clause:
-       <br>min<sub><var>C</var><sub><var>k</var></sub> &isin; <var>C</var></sub> |<var>C</var><sub><var>k</var></sub>| &ge; 4</li>
+      <li>Enforce minimum group size (# of disjunctive codepoints) per condition.</li>
       <li><strong>Phase A:</strong> Greedily apply &Delta;cost &lt; 0 merges.</li>
       <li><strong>Phase B:</strong> Accept <strong>least-positive &Delta;cost</strong> merges until &ge; 4.</li>
      </ul>
@@ -1144,8 +1098,7 @@
     <section>
      <h3>Heuristic Merger (Fallback)</h3>
      <ul class="compact">
-      <li>For symbols/PUA without frequency data.</li>
-      <li>Pre-groups in blocks of 3 &times; <code>min_group_size</code> = 12.</li>
+      <li>For codepoints without frequency data.</li>
       <li>Merges adjacent patches in codepoint order up to <code>min_patch_size = 2500</code> B.</li>
      </ul>
     </section>
