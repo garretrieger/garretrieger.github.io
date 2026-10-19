@@ -1362,8 +1362,8 @@
     </svg>
    </figure>
    <ul class="compact">
-    <li><strong>Nodes:</strong> Non-outline table subset states (<code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, design space).</li>
-    <li><strong>Edges:</strong> Per-table Brotli shared-dictionary binary diffs (<code>.ift_tk</code>) transitioning <var>A</var> &rarr; <var>A</var> &cup; &Delta;.</li>
+    <li><strong>Nodes:</strong> Non-outline table subset states.</li>
+    <li><strong>Edges:</strong> Brotli shared-dictionary binary diffs. Transitioning <var>A</var> &rarr; <var>A</var> &cup; &Delta;.</li>
    </ul>
   </section>
 
@@ -1379,13 +1379,13 @@
    <div class="columns">
     <section>
      <h3>1. Jump Ahead</h3>
-     <p><code>jump_ahead</code> (default <code>2</code>): adds multi-segment outgoing edges in 1 round trip.</p>
+     <p><code>jump_ahead</code>: adds multi-segment outgoing edges in 1 round trip.</p>
      <h3>2. Prefetch Lists</h3>
-     <p><code>use_prefetch_lists</code> (<code>true</code>): encodes jumps as a Format 2 <strong>Prefetch List</strong> of 1-seg patches—<strong>zero extra patch files</strong>!</p>
+     <p><code>use_prefetch_lists</code>: Jumps use <strong>Prefetch List</strong> of 1-seg patches.</p>
     </section>
     <section>
      <h3>3. Max Depth</h3>
-     <p><code>max_depth</code> (&le; 2048 patches): caps DAG depth <var>D</var> (floor <code>3</code>); at <var>D</var>&minus;1, one patch adds all remaining segments.</p>
+     <p><code>max_depth</code>: caps DAG depth <var>D</var>. Maximum number of round trips to reach full coverage.</p>
      <h3>4. All-Segment Edges</h3>
      <p><code>include_all_segment_patches</code>: optional "add all remaining" edge at every node.</p>
     </section>
@@ -1402,11 +1402,9 @@
   <section class="slide" id="compiler-algorithm">
    <h2>Recursive Compilation (<code>Compile</code>)</h2>
    <ol class="compact">
-    <li><strong>Glyph Patches (<code>.ift_gk</code>):</strong> Slice &amp; Brotli-compress outlines for design space.</li>
-    <li><strong>Outgoing Edges:</strong> Assign 128-bit ID; build 1-seg, prefetch &amp; <code>max_depth</code> jumps.</li>
-    <li><strong>Patch Maps (<code>EntryGraph</code>):</strong> Deduplicate shared sub-conditions into <code>IFT </code>/<code>IFTX</code>.</li>
+        <li><strong>Outgoing Edges:</strong> walk graph generate table keyed patches for each edge.</li>
     <li><strong>Node Font:</strong> Subset original font to node state and insert <code>IFT </code>/<code>IFTX</code>.</li>
-    <li><strong>Table Diffs (<code>.ift_tk</code>):</strong> Recursively compile target nodes <var>B&prime;</var> and Brotli-diff <var>B</var> &rarr; <var>B&prime;</var>.</li>
+    <li><strong>Glyph Patches:</strong> Slice &amp; Brotli-compress outlines per unique design space configuration.</li>
    </ol>
   </section>
 
@@ -1419,29 +1417,20 @@
   ===================================================================== -->
   <section class="slide" id="compiler-special-handling">
    <h2>OpenType Special Handling &amp; Testing</h2>
-   <div class="columns">
     <section>
      <h3>OpenType Requirements</h3>
      <ul class="compact">
       <li><strong>Retain GIDs:</strong> Sizes <code>maxp</code> for all patches.</li>
-      <li><strong>Long <code>loca</code>:</strong> Forces 32-bit offsets.</li>
-      <li><strong>2-Step <code>gvar</code>:</strong> Preserves shared tuples.</li>
-      <li><strong><code>CFF</code> &amp; WOFF2:</strong> Desubroutinizes &amp; round-trips.</li>
+      <li><strong>Long <code>loca</code>:</strong> force 32-bit offsets if source font has them.</li>
+      <li><strong>2-Step <code>gvar</code>:</strong> Special handling preserves shared tuples.</li>
+      <li><strong><code>CFF</code></strong> Desubroutinizes &amp; encode char string offsets in IFT</li>
+      <li><strong><code>WOFF2:</code></strong>Round trip and no glyf transforms in WOFF2.</li>
      </ul>
     </section>
-    <section>
-     <h3>Fontations Integration Tests</h3>
-     <ul class="compact">
-      <li>Tested against Rust <strong>Fontations IFT Client</strong>.</li>
-      <li>Verifies exact <code>cmap</code>, outlines &amp; RTs.</li>
-      <li><strong>Future:</strong> GK-only mode &amp; size sorting.</li>
-     </ul>
-    </section>
-   </div>
   </section>
 
   <section class="comment">
-   <p>Making table-keyed subsetting and glyph-keyed outline patching work together requires careful OpenType engineering: retaining GIDs, forcing long <code>loca</code> offsets when needed, two-step <code>gvar</code> subsetting so shared tuples stay synchronized, desubroutinizing <code>CFF</code>/<code>CFF2</code> charstrings, and round-tripping the initial font through WOFF2 before diffing. All of this is verified against the Rust Fontations IFT client.</p>
+   <p>Making table-keyed subsetting and glyph-keyed outline patching work together requires careful OpenType engineering: retaining GIDs, forcing long <code>loca</code> offsets when needed, two-step <code>gvar</code> subsetting so shared tuples stay synchronized, desubroutinizing <code>CFF</code>/<code>CFF2</code> charstrings, and round-tripping the initial font through WOFF2 before diffing.</p>
   </section>
 
   <!-- ====================================================================
@@ -1450,6 +1439,9 @@
   <section class="slide final" id="conclusion">
    <div>
     <h2>Thank You &amp; Questions!</h2>
+   </div>
+   <div>
+    <h2>Resources</h2>
     <ul class="with-icons">
      <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
       <a href="https://github.com/w3c/ift-encoder">github.com/w3c/ift-encoder</a></li>
@@ -1457,17 +1449,6 @@
       <a href="https://github.com/w3c/ift-encoder-data">github.com/w3c/ift-encoder-data</a></li>
      <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
       <a href="https://w3c.github.io/IFT/Overview.html">w3c.github.io/IFT/Overview.html</a></li>
-     <li><svg aria-label="Email"><use xlink:href="Templates/icons.svg#mail"></use></svg>
-      grieger@google.com</li>
-    </ul>
-   </div>
-   <div>
-    <h2>Key Takeaways</h2>
-    <ul class="compact">
-     <li><strong>Zero-Config:</strong> Auto script clustering.</li>
-     <li><strong>Closure-Safe:</strong> Tarjan SCC + CNF.</li>
-     <li><strong>Cost-Optimal:</strong> Bigram bounds &amp; <var>P</var><sub>agg</sub>.</li>
-     <li><strong>Fast at Scale:</strong> Pruning &amp; inert segs.</li>
     </ul>
    </div>
   </section>
