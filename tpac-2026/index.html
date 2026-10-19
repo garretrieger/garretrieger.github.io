@@ -1129,10 +1129,10 @@
    <p>CJK fonts start with <var>n</var> &gt; 20,000 segments &rarr; O(<var>n</var><sup>2</sup>) candidate pairs.</p>
    <h3>Four Optimization Pillars</h3>
    <ol class="compact">
-    <li><strong>Best-Case Pruning:</strong> Reject pairs before calling Brotli.</li>
-    <li><strong>Pre-Grouping &amp; Cutoff:</strong> Shrink <var>n</var> upfront; skip rare tail.</li>
-    <li><strong>Inert Segments &amp; Partial Graph:</strong> Bypass closure when safe.</li>
-    <li><strong>Caching &amp; Brotli Tiers:</strong> Memoize sizes, closures &amp; probs.</li>
+    <li><strong>Best-Case Pruning</strong></li>
+    <li><strong>Pre-Grouping &amp; Cutoff:</strong></li>
+    <li><strong>Inert Segments &amp; Partial Graph:</strong></li>
+    <li><strong>Caching &amp; Brotli Tiers:</strong></li>
    </ol>
   </section>
 
@@ -1145,7 +1145,8 @@
   ===================================================================== -->
   <section class="slide" id="opt-best-case-pruning">
    <h2>Opt 1: Best-Case Cost Pruning</h2>
-   <p><strong>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header</strong></p>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center">
+   <strong>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header</strong></p>
    <div class="columns">
     <section>
      <h3>Size Reduction Bound</h3>
@@ -1169,7 +1170,26 @@
   </section>
 
   <!-- ====================================================================
-       SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING
+       SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING (A)
+  ===================================================================== -->
+  <section class="slide" id="opt-cutoff-pregrouping">
+   <h2>Opt 2: Pre-Grouping &amp; Tail Cutoff</h2>
+   <section>
+     <h3>Observation</h3>
+     <ul>
+      <li>Segment's contribution to total cost is proportional to its probability.</li>
+      <li>Therefore, very low probability segments have marginal impact.</li>
+      <li>Don't waste time optimizing these.</li>
+     </ul>
+   </section>
+  </section>
+
+  <section class="comment">
+   <p>Looking at the cost function we can see that segments with very low probability will have marginal impact on the total cost of a segmentation. Therefore we shouldn't waste time trying to optimize these as it will not yield improvements to the overal cost of a segmentation.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING (B)
   ===================================================================== -->
   <section class="slide" id="opt-cutoff-pregrouping">
    <h2>Opt 2: Pre-Grouping &amp; Tail Cutoff</h2>
@@ -1179,22 +1199,21 @@
      <ul class="compact">
       <li>Sorts segments by descending <var>P</var>(<var>s</var><sub><var>i</var></sub>).</li>
       <li>Pre-merges tail segments below <code>0.05%–5%</code> into groups of 4 <strong>before</strong> closure.</li>
-      <li>Cuts initial <var>n</var> by up to <strong>4&times;</strong>!</li>
      </ul>
     </section>
     <section>
      <h3>2. Optimization Cutoff</h3>
      <ul class="compact">
-      <li>Ranks segments by baseline cost <var>P</var>(<var>s</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>).</li>
-      <li>Marks bottom <code>0.5%–5%</code> cumulative cost tail as cutoff.</li>
-      <li>Skips O(<var>n</var><sup>2</sup>) search on cutoff segments; merges in O(1)!</li>
+      <li>Check total cost contribution of each segment.</li>
+      <li>Those below <code>0.5%–5%</code> of total cost are not optimized.</li>
+      <li>Only apply min group size requirements</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>We exploit the Zipfian distribution of character frequencies in two ways: first, <code>PreGroupSegments</code> merges rare segments into chunks of 4 before building the dependency graph; second, segments in the bottom 0.5% to 5% of total cost contribution skip O(<var>n</var><sup>2</sup>) pair evaluation completely.</p>
+   <p>We can take advantage of this in two ways: first, <code>PreGroupSegments</code> merges rare segments into chunks of 4 before building the dependency graph; second, segments in the bottom 0.5% to 5% of total cost contribution skip O(<var>n</var><sup>2</sup>) pair evaluation completely.</p>
   </section>
 
   <!-- ====================================================================
@@ -1206,23 +1225,23 @@
     <section>
      <h3>Inert Segments</h3>
      <ul class="compact">
-      <li>Only exclusive glyphs; zero cross-segment edges.</li>
-      <li><strong>Closed Under Union:</strong> Merging yields <var>G</var><sub><var>a</var></sub> &cup; <var>G</var><sub><var>b</var></sub> with <strong>zero closure recomputation</strong>.</li>
-      <li><strong>Batch Init Merging:</strong> Moves inert segments to <var>s</var><sub>0</sub> in one batch!</li>
+      <li>No interactions.</li>
+      <li>One patch: if(<var>s</var><sub>i</sub>) then <var>p</var><sub>j</sub></li>
+      <li>Can be batch processed.</li>
      </ul>
     </section>
     <section>
-     <h3>Incremental Graph Updates</h3>
+     <h3>Incremental Updates</h3>
      <ul class="compact">
-      <li><strong>Partial Invalidation:</strong> Updates only glyphs reachable from merged segment.</li>
-      <li><strong>Composite Filtering:</strong> Restricts 3+-way merges to <code>base_segment_index</code> (<strong>~15%</strong> faster; <strong>86%</strong> on Arabic).</li>
+      <li>After applying merges all state is incrementally updated</li>
+      <li>Includes derived activation conditions</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>Inert segments only map to exclusive glyphs and have zero multi-segment interactions. Merging two inert segments requires zero condition recomputation, and inert segments can be merged into the initial font in a single batch. When non-inert segments merge, we incrementally update only the reachable subgraph.</p>
+   <p>Inert segments only map to exclusive glyphs and have zero multi-segment interactions. Merging two inert segments requires zero condition recomputation, and inert segments can be merged into the initial font in a single batch. When non-inert segments merge, we incrementally update only the effected state.</p>
   </section>
 
   <!-- ====================================================================
@@ -1232,54 +1251,58 @@
    <h2>Opt 4: Caching &amp; Brotli Quality Tiers</h2>
    <div class="columns">
     <section>
-     <h3>Three Caches</h3>
+     <h3>Four Caches</h3>
      <ul class="compact">
-      <li><strong><code>PatchSizeCache</code>:</strong> <code>GlyphSet &rarr; compressed bytes</code>.</li>
-      <li><strong><code>GlyphClosureCache</code>:</strong> <code>SubsetDefinition &rarr; GlyphSet</code>.</li>
-      <li><strong>Probability Caches:</strong> Vector for <var>P</var>(<var>s</var><sub><var>i</var></sub>) + hash map for clauses.</li>
+      <li>Glyph set to patch size.</li>
+      <li>Subset def to glyph closure.</li>
+      <li>Segment to probability.</li>
+      <li>Codepoint set to probability.</li>
      </ul>
     </section>
     <section>
      <h3>Brotli Quality Tiers</h3>
      <ul class="compact">
-      <li><strong>Quality 11 (Q6–Q7):</strong> Maximum accuracy.</li>
-      <li><strong>Quality 9 (Q4–Q5):</strong> Much faster, near-identical merges.</li>
-      <li><strong>Quality 0 (Q1–Q3):</strong> O(1) size estimate via font-wide compression ratio!</li>
+      <li><strong>Q11:</strong>Maximum accuracy, very slow.</li>
+      <li><strong>Q9:</strong>Much faster, but still good accuracy.</li>
+      <li><strong>Q0:</strong> O(1) size estimate via font-wide compression ratio.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>We layer three caches across the segmenter: <code>PatchSizeCache</code>, <code>GlyphClosureCache</code>, and per-calculator probability caches. We also tune the Brotli quality used during merge evaluation—from Q11 down to Q9, or Q0 where <code>EstimatedPatchSizeCache</code> estimates patch sizes in O(1) time using the font's overall outline compression ratio.</p>
+   <p>We aggressively cache expensive operations throughout. Most importantly both probability and brotli compressions are cached. For bi-gram probability calculations we also store intermediate state per segment that speeds up
+     the computation of composite condition probabilities. For brotli experimentation has found that quality 9 has a good tradeoff of speed and accuracy. Below that you can get some poor results. When maximum speed is needed
+     we estimate brotli compression by using a compression ratio computed from the input font.</p>
   </section>
 
   <!-- ====================================================================
        SLIDE 40: CLOSURE REQUIREMENT VALIDATION
   ===================================================================== -->
   <section class="slide" id="closure-validation">
-   <h2>Closure Requirement Validation</h2>
+   <h2>Segmentation Validation</h2>
    <div class="columns">
     <section>
      <h3>1. Incremental State Check</h3>
      <ul class="compact">
-      <li><code>ValidateIncrementalGroupings</code> re-runs condition analysis and grouping <strong>from scratch</strong>.</li>
-      <li>Asserts incremental state matches full recomputation.</li>
+      <li>Compare incremental state to full recomputation.</li>
+      <li>Ensure they didn't diverge.</li>
      </ul>
     </section>
     <section>
      <h3>2. Closure &amp; Partition Check</h3>
      <ul class="compact">
-      <li><strong><code>ValidateSegmentation</code>:</strong> <var>s</var><sub>0</sub> and all <var>G</var><sub><var>p</var></sub> are disjoint and union to <code>FullClosure()</code>.</li>
-      <li><strong>Complement Closure Check:</strong> For each patch <var>G</var><sub><var>p</var></sub> and clause <var>C</var><sub><var>k</var></sub>:
-       <br><strong>closure(<var>F</var>, <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub>) &cap; <var>G</var><sub><var>p</var></sub> = &empty;</strong></li>
+      <li>Verify patches are disjoint.</li>
+      <li>Use harfbuzz subset closure to validate closure requirement.</li>
      </ul>
     </section>
    </div>
   </section>
 
   <section class="comment">
-   <p>At the end of segmentation, we run two strict validation checks: <code>ValidateIncrementalGroupings</code> recomputes all glyph conditions from scratch and asserts equivalence with the incremental state; <code>ValidateSegmentation</code> verifies disjoint partitioning and runs HarfBuzz closure on the complement set <var>S</var><sub>all</sub> &setminus; <var>C</var><sub><var>k</var></sub> for every clause <var>C</var><sub><var>k</var></sub> to prove no glyph in <var>G</var><sub><var>p</var></sub> can be reached when <var>C</var><sub><var>k</var></sub> is false.</p>
+   <p>At the end of segmentation, we run two strict validation checks:
+     Recomputes all glyph conditions from scratch and asserts equivalence with the incremental state;
+     Verify disjoint partitioning and utilize HarfBuzz closure to prove that the segmentation satisfies the closure requirement.</p>
   </section>
 
   <!-- ====================================================================
