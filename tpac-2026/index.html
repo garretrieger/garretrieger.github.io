@@ -37,12 +37,12 @@
   <section class="slide" id="agenda">
    <h2>Agenda</h2>
    <ol class="compact">
-    <li><strong>Pipeline &amp; Workflows:</strong> Auto config, segmenter, compiler</li>
-    <li><strong>Automatic Configuration:</strong> Script clustering, quality levels (1–7)</li>
-    <li><strong>Dependency Graph &amp; Conditions:</strong> Closure, condition propagation, CNF</li>
-    <li><strong>Cost-Based Merging:</strong> Expected bytes, bigram bounds, multi-script <var>P</var><sub>agg</sub></li>
-    <li><strong>Key Optimizations:</strong> Best-case pruning, cutoffs, inert segments, caching</li>
-    <li><strong>The IFT Compiler:</strong> Table-keyed patch DAG, prefetch lists, OpenType rules</li>
+    <li><strong>Pipeline &amp; Workflows</strong></li>
+    <li><strong>Automatic Configuration</strong></li>
+    <li><strong>Dependency Graph &amp; Conditions</strong></li>
+    <li><strong>Cost-Based Merging</strong></li>
+    <li><strong>Key Optimizations</strong></li>
+    <li><strong>The IFT Compiler</strong></li>
    </ol>
   </section>
 
@@ -303,7 +303,7 @@
      </tr>
     </thead>
     <tbody>
-     <tr><td><strong>1</strong></td><td>No</td><td><em>Yes</em></td><td><code>0</code> </td><td><code>0</code> </td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
+     <tr><td><strong>1</strong></td><td>No</td><td><strong>Yes</strong></td><td><code>0</code> </td><td><code>0</code> </td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
      <tr><td><strong>2</strong></td><td>No</td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>54%</td><td>4.0%</td><td>4.0%</td></tr>
      <tr><td><strong>3</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>48%</td><td>3.0%</td><td>3.0%</td></tr>
      <tr><td><strong>4</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><strong><code>9</code></strong></td><td>42%</td><td>2.0%</td><td>2.0%</td></tr>
@@ -406,11 +406,9 @@
   ===================================================================== -->
   <section class="slide" id="closure-requirement">
    <h2>The Closure Requirement</h2>
-   <ul class="compact">
-    <li><strong>Segment (<var>s</var><sub><var>i</var></sub>):</strong> Atomic set of Unicode codepoints and/or feature tags.</li>
-    <li><strong>Initial Font (<var>s</var><sub>0</sub>):</strong> Baseline glyphs included in the initial WOFF2 font.</li>
-    <li><strong>Disjoint Patches:</strong> Every glyph outside <var>s</var><sub>0</sub> belongs to <strong>exactly one</strong> patch.</li>
-   </ul>
+   <p>The segmenter ensure the following requirements are satisfied:</p>
+   <h3>Disjoint Patches</h3>
+   <p>Every glyph outside <var>s</var><sub>0</sub> belongs to <strong>exactly one</strong> patch.</p>
    <h3>Closure Invariant</h3>
    <p>For any subset of codepoints and layout features, the glyphs in the initial font plus all matching patches must be a <strong>superset of the font subsetter's glyph closure</strong> for that subset.</p>
   </section>
