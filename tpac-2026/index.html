@@ -1128,9 +1128,9 @@
    <h3>Four Optimization Pillars</h3>
    <ol class="compact">
     <li><strong>Best-Case Pruning</strong></li>
-    <li><strong>Pre-Grouping &amp; Cutoff:</strong></li>
-    <li><strong>Inert Segments &amp; Partial Graph:</strong></li>
-    <li><strong>Caching &amp; Brotli Tiers:</strong></li>
+    <li><strong>Pre-Grouping &amp; Cutoff</strong></li>
+    <li><strong>Inert Segments &amp; Partial Graph</strong></li>
+    <li><strong>Caching &amp; Brotli Tiers</strong></li>
    </ol>
   </section>
 
@@ -1196,7 +1196,7 @@
      <h3>1. Pre-Closure Grouping</h3>
      <ul class="compact">
       <li>Sorts segments by descending <var>P</var>(<var>s</var><sub><var>i</var></sub>).</li>
-      <li>Pre-merges tail segments below <code>0.05%–5%</code> into groups of 4 <strong>before</strong> closure.</li>
+      <li>Pre-merges tail segments below <code>0.05%–5%</code> into groups of 4.</li>
      </ul>
     </section>
     <section>
@@ -1226,6 +1226,7 @@
       <li>No interactions.</li>
       <li>One patch: if(<var>s</var><sub>i</sub>) then <var>p</var><sub>j</sub></li>
       <li>Can be batch processed.</li>
+      <li>Plus fast path special case for various operations.</li>
      </ul>
     </section>
     <section>
