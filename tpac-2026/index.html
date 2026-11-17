@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="en-us">
+ <head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width" name="viewport">
+  <title>IFT Encoder Deep Dive — TPAC 2026</title>
+  <meta name="description" content="Deep dive into the Incremental Font Transfer (IFT) Encoder architecture, dependency graph, cost-based segmenter, and compiler for TPAC 2026">
+  <link rel="stylesheet" href="Templates/slides.css">
+  <script src="Templates/b6plus.js"></script>
+ </head>
+ <body class="shower fade-in duration=50 warn=5 hidemouse">
+
+  <section class="comment">
+   <p>Slides for the <strong>Incremental Font Transfer (IFT) Encoder Deep Dive</strong> presentation at <a href="https://www.w3.org/events/tpac/2026/tpac-2026/">W3C TPAC 2026</a>.</p>
+   <p><strong>Navigation:</strong> <span class="if-b6plus">Press <kbd>A</kbd> or double-click any slide to start the slide show. Return to the index with <kbd>A</kbd> or <kbd>Esc</kbd>. Press <kbd>2</kbd> to open the presenter view with speaker notes and countdown timer, or <kbd>?</kbd> for all keyboard shortcuts.</span></p>
+  </section>
+
+  <div class="progress"></div>
+  <div class="clock"></div>
+  <div role="region" aria-live="assertive">Leaving slide mode.</div>
+
+  <!-- ====================================================================
+       SLIDE 1: COVER
+  ===================================================================== -->
+  <section class="slide cover" id="cover">
+   <h1>Incremental Font Transfer (IFT) Encoder Deep Dive</h1>
+   <address>Garret Rieger<br>Google Fonts · W3C WebFonts WG<br>TPAC 2026</address>
+  </section>
+
+  <section class="comment">
+   <p>Welcome everyone. Today we're doing a technical deep dive into the W3C Incremental Font Transfer (IFT) reference encoder (<code>w3c/ift-encoder</code>)—covering how we go from an arbitrary OpenType font to an optimized set of glyph-keyed and table-keyed patches that preserve shaping closure while minimizing expected bytes transferred.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 2: AGENDA & TALK OVERVIEW
+  ===================================================================== -->
+  <section class="slide" id="agenda">
+   <h2>Agenda</h2>
+   <ol class="compact">
+    <li><strong>Pipeline &amp; Workflows</strong></li>
+    <li><strong>Automatic Configuration</strong></li>
+    <li><strong>Dependency Graph &amp; Conditions</strong></li>
+    <li><strong>Cost-Based Merging</strong></li>
+    <li><strong>Key Optimizations</strong></li>
+    <li><strong>The IFT Compiler</strong></li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p>Here is our roadmap. We'll start with the three-stage encoding pipeline and CLI workflows, then cover automatic configuration, the Unicode and glyph dependency graph, condition extraction, cost-based merging, our core performance optimizations, and finally the IFT compiler.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 3: IFT ENCODING RECAP
+  ===================================================================== -->
+  <section class="slide two-panes" id="ift-recap">
+   <div>
+    <h2>IFT Encoding Model</h2>
+    <p>Compact <strong>Initial Font</strong> (WOFF2) with patch maps (<code>IFT </code> / <code>IFTX</code>).</p>
+    <ul class="compact">
+     <li><strong>Outlines:</strong> <code>glyf</code>, <code>loca</code>, <code>gvar</code>, <code>CFF</code>, <code>CFF2</code></li>
+     <li><strong>Non-Outlines:</strong> <code>cmap</code>, <code>GSUB</code>, <code>GPOS</code>, <code>COLR</code>, <code>...</code></li>
+    </ul>
+   </div>
+   <div>
+    <h3>Two Patch Types</h3>
+    <ul class="compact">
+     <li><strong>Glyph-Keyed (<code>.ift_gk</code>):</strong> Additive per-glyph data</li>
+     <li><strong>Table-Keyed (<code>.ift_tk</code>):</strong> Brotli binary diffs per table.</li>
+     <li><strong>Mixed Mode:</strong> Coarse <code>.ift_tk</code> + fine <code>.ift_gk</code>.</li>
+    </ul>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>An IFT encoding splits font data into outline tables and non-outline tables. Outline tables are extended via Glyph-Keyed patches, which are additive per-glyph bundles. Non-outline tables are extended via Table-Keyed patches, which are binary diffs relative to a specific base font state. The encoder operates in Mixed Mode by default.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 4: THREE-STAGE PIPELINE ARCHITECTURE
+  ===================================================================== -->
+  <section class="slide" id="pipeline-overview">
+   <h2>Three-Stage Encoding Pipeline</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 155" role="img" aria-label="Three-stage IFT encoding pipeline diagram">
+     <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--h3-fg)" />
+      </marker>
+     </defs>
+     <rect x="5" y="20" width="130" height="115" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="70" y="54" text-anchor="middle" fill="var(--slide-fg)" font-size="15" font-weight="bold">Input Font</text>
+     <text x="70" y="79" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5">.ttf / .otf</text>
+     <text x="70" y="105" text-anchor="middle" fill="var(--h3-fg)" font-size="12.5" font-weight="bold">+ Freq Data</text>
+
+     <line x1="135" y1="78" x2="165" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+     <rect x="170" y="8" width="170" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="255" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">1. Auto Config</text>
+     <text x="255" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Detect &amp; group scripts</text>
+     <text x="255" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Pick Quality (1–7)</text>
+     <rect x="184" y="102" width="142" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="255" y="122" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">SegmenterConfig</text>
+
+     <line x1="340" y1="78" x2="370" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+     <rect x="375" y="8" width="175" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="462" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">2. Segmenter</text>
+     <text x="462" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Dep graph conditions</text>
+     <text x="462" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Cost-based merging</text>
+     <rect x="390" y="102" width="145" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="462" y="122" text-anchor="middle" fill="var(--slide-fg)" font-size="12" font-family="monospace">SegmentationPlan</text>
+
+     <line x1="550" y1="78" x2="580" y2="78" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+     <rect x="585" y="8" width="170" height="138" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="670" y="34" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">3. Compiler</text>
+     <text x="670" y="58" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Walk table-keyed DAG</text>
+     <text x="670" y="80" text-anchor="middle" fill="var(--slide-fg)" font-size="12">Emit patch maps &amp; diffs</text>
+     <rect x="596" y="102" width="148" height="30" rx="4" fill="none" stroke="var(--h3-fg)"/>
+     <text x="670" y="122" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">font.woff2 + patches</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li>Stages 1 &amp; 2 optimize the plan; Stage 3 deterministically compiles it.</li>
+    <li>Inspectable <code>segmenter_config.proto</code> and <code>segmentation_plan.proto</code>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Under the hood, IFT font encoding happens in three distinct stages separated by protobuf schemas. Stage 1 analyzes the font and builds a <code>SegmenterConfig</code>. Stage 2 runs the dependency graph analyzer and cost-based merger to produce a <code>SegmentationPlan</code>. Stage 3 compiles the plan and original font into the final WOFF2 initial font and patch files.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 5: PRODUCING IFT FONTS - AUTO CONFIG
+  ===================================================================== -->
+  <section class="slide" id="producing-auto">
+   <h2>Single-Step Workflow: font2ift</h2>
+   <pre><code>font2ift --input_font=MyFont.ttf \
+  --output_path=ift/ --output_font=MyFont.woff2</code></pre>
+   <div class="columns">
+    <section>
+     <h3>Primary Script</h3>
+     <ul class="compact">
+      <li><code>--auto_config_primary_script</code></li>
+      <li>Target script or language (e.g., <code>Script_japanese</code>).</li>
+      <li>Merges top glyphs into <strong>initial font</strong> &amp; priotizes script when there are overlaps.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Quality Level</h3>
+     <ul class="compact">
+      <li><code>--auto_config_quality</code> (<code>1</code> to <code>7</code>)</li>
+      <li>Trades CPU time for smaller transfer bytes.</li>
+      <li>Auto-selected by heuristic if omitted.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>For most users, <code>font2ift</code> provides a single-command workflow. You give it an input font and output path, and it automatically generates a config, segments the font, and compiles the output. Two optional flags let you guide auto-configuration: <code>--auto_config_primary_script</code> and <code>--auto_config_quality</code>.
+     Setting a primary script tells the segmenter to prioritize that script when generating the plan: first the primary script is eligible to have it's codepoints moved into the init font if they are high probability, second
+     when there other other scripts overlapping the primary script, then the primary script takes precedence. It's cost is optimized first ahead of the non-primary scripts.
+   </p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 6: PRODUCING IFT FONTS - MULTI-STEP WORKFLOW
+  ===================================================================== -->
+  <section class="slide" id="producing-multistep">
+   <h2>Multi-Step Advanced Workflow</h2>
+   <ol class="compact">
+    <li><strong>Generate Config:</strong>
+     <pre><code>gen_ift_segmenter_config --quality=5 \
+  --input_font=MyFont.ttf &gt; config.txtpb</code></pre>
+    </li>
+    <li><strong>Generate Segmentation Plan:</strong>
+     <pre><code>gen_ift_segmentation_plan --config=config.txtpb \
+  --input_font=MyFont.ttf &gt; plan.txtpb</code></pre>
+    </li>
+    <li><strong>Compile Font &amp; Patches:</strong>
+     <pre><code>font2ift --input_font=MyFont.ttf --plan=plan.txtpb \
+  --output_path=out/ --output_font=MyFont.woff2</code></pre>
+    </li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p>For advanced use cases—such as inspecting intermediate plans, supplying custom frequency datasets, or tuning merge parameters—each stage has its own CLI utility: <code>gen_ift_segmenter_config</code>, <code>gen_ift_segmentation_plan</code> (or <code>gen_ift_table_keyed_plan</code>), and finally <code>font2ift --plan=...</code>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 7: PART 1 HEADER - AUTOMATIC CONFIGURATION
+  ===================================================================== -->
+  <section class="slide part" id="part-autoconfig">
+   <h1>Part 1: Automatic Configuration</h1>
+   <p>Script detection, overlap clustering, quality levels &amp; heuristics</p>
+  </section>
+
+  <section class="comment">
+   <p>Let's now dive into Part 1: how <code>AutoSegmenterConfig</code> analyzes an input font and constructs an effective segmentation configuration automatically.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 8: RESPONSIBILITIES OF AUTOSEGMENTERCONFIG
+  ===================================================================== -->
+  <section class="slide" id="autoconfig-overview">
+   <h2>What AutoSegmenterConfig Does</h2>
+   <ol class="compact">
+    <li><strong>Script Detection:</strong> Matches codepoints against 183 datasets in <code>ift-encoder-data</code>.</li>
+    <li><strong>Overlap Clustering:</strong> Unions scripts with &ge; 10% overlap into shared <code>MergeGroup</code>s.</li>
+    <li><strong>Primary Script Priority:</strong> Scopes initial-font merging and splits clusters.</li>
+    <li><strong>Table-Keyed Setup:</strong> 1 segment/script, <code>jump_ahead=2</code>, prefetch lists, <code>max_depth</code>.</li>
+    <li><strong>Quality Selection:</strong> Applies level <code>1..7</code> or the Auto Quality Heuristic.</li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p><code>AutoSegmenterConfig::GenerateConfig</code> is responsible for five key tasks: detecting which scripts are present in the font,
+     clustering overlapping scripts into merge groups,
+     prioritizing the primary script,
+     bounding the table-keyed patch graph size,
+     and configuring quality/runtime tradeoffs.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 8B: SEGMENTS & MERGE GROUPS
+  ===================================================================== -->
+  <section class="slide" id="merge-groups">
+   <h2>Segments &amp; Merge Groups</h2>
+   <div class="columns">
+    <section>
+     <h3>Segment</h3>
+     <ul class="compact">
+      <li>Grouping of <strong>codepoints + layout features</strong>.</li>
+      <li>Smallest unit the font can be extended by.</li>
+     </ul>
+     <h3>Merge Group</h3>
+     <ul class="compact">
+      <li>Partitions input segments.</li>
+      <li>No cross group merges allowed.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Why Isolate Groups?</h3>
+     <ul class="compact">
+      <li><strong>Script Separation:</strong> Keeps disjoint scripts (e.g. Latin, Cyrillic) separate.</li>
+      <li><strong>Bounds O(<var>n</var><sup>2</sup>) Search:</strong> Limits quadratic pair evaluation to each group.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Before looking at how scripts are detected and clustered, let's define two core concepts: a <strong>Segment</strong> is a grouping of Unicode codepoints and layout features that acts as the smallest unit the font can be extended by. A <strong>Merge Group</strong> partitions input segments into isolated subsets, where each group is optimized independently using its own frequency datasets. Isolating merge groups prevents cross-group merges, keeps disjoint scripts like Latin and Cyrillic separate, and bounds the quadratic O(<var>n</var><sup>2</sup>) candidate search to each individual group.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 9: SCRIPT DETECTION & OVERLAP CLUSTERING
+  ===================================================================== -->
+  <section class="slide" id="script-detection">
+   <h2>Script Detection &amp; Overlap Clustering</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Script Detection</h3>
+     <ul class="compact">
+      <li>Look for &gt; 1 unique codepoints (not in other scripts)</li>
+      <li>CJK special cased due to high overlap.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Overlap Clustering</h3>
+     <ul class="compact">
+      <li>Divides scripts into merge groups.</li>
+      <li>Ignores spaces, controls &amp; combining marks.</li>
+      <li>Scripts with &ge; <strong>10%</strong> shared probability mass are placed in the same group.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>If two scripts share codepoints and are placed in separate merge groups, those shared codepoints are excluded from cost merging. Conversely, grouping on any shared codepoint chains everything together via spaces and punctuation. We filter out spaces, controls, and combining marks, and union scripts whose shared codepoints cover at least 10% of either script's unigram probability mass (<code>kScriptOverlapThreshold = 0.10</code>).</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 10: QUALITY LEVELS (1-7)
+  ===================================================================== -->
+  <section class="slide" id="quality-levels">
+   <h2>Auto Config: Quality Levels (1–7)</h2>
+   <table class="striped">
+    <thead>
+     <tr>
+      <th>Quality</th>
+      <th>Bigrams</th>
+      <th>Cond. Simplify</th>
+      <th>Init Brotli</th>
+      <th>Merge Brotli</th>
+      <th>Init Prob.</th>
+      <th>Opt. Cutoff</th>
+      <th>Pre-Group</th>
+     </tr>
+    </thead>
+    <tbody>
+     <tr><td><strong>1</strong></td><td>No</td><td><strong>Yes</strong></td><td><code>0</code> </td><td><code>0</code> </td><td>60%</td><td>5.0%</td><td>5.0%</td></tr>
+     <tr><td><strong>2</strong></td><td>No</td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>54%</td><td>4.0%</td><td>4.0%</td></tr>
+     <tr><td><strong>3</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><code>0</code> </td><td>48%</td><td>3.0%</td><td>3.0%</td></tr>
+     <tr><td><strong>4</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>0</code> </td><td><strong><code>9</code></strong></td><td>42%</td><td>2.0%</td><td>2.0%</td></tr>
+     <tr><td><strong>5</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>9</code></strong></td><td><strong><code>9</code></strong></td><td>36%</td><td>1.0%</td><td>1.0%</td></tr>
+     <tr><td><strong>6</strong></td><td><strong>Yes</strong></td><td>No</td><td><code>9</code></td><td><strong><code>11</code></strong></td><td>30%</td><td>0.5%</td><td>0.5%</td></tr>
+     <tr><td><strong>7</strong></td><td><strong>Yes</strong></td><td>No</td><td><strong><code>11</code></strong></td><td><strong><code>11</code></strong></td><td>25%</td><td>0.5%</td><td>0.05%</td></tr>
+    </tbody>
+   </table>
+  </section>
+
+  <section class="comment">
+   <p>Here are the seven quality levels in <code>auto_segmenter_config.cc</code>. Lower quality levels progressively shed expensive operations: Q6–Q7 use Brotli 11 during merging; Q4–Q5 drop to Brotli 9; Q1–Q3 use Brotli 0 (linear size estimation from raw outline bytes); Q1–Q2 use unigrams instead of bigrams; and Q1 simplifies composite conditions while raising cutoffs to 5%. All levels use <code>min_group_size = 4</code> and <code>network_overhead_cost = 200</code>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 11: AUTO QUALITY HEURISTIC
+  ===================================================================== -->
+  <section class="slide" id="auto-quality-heuristic">
+   <h2>The Auto Quality Heuristic</h2>
+   <div class="columns">
+    <section>
+     <h3>Selection Criteria</h3>
+     <ul class="compact">
+      <li><code>f(<strong>number of codepoints</strong>) -> <strong>quality level</strong></code></li>
+      <li>Goal: <strong>99.5%</strong> of fonts take &lt; <strong>15 minutes</strong>.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Limits &amp; Future Work</h3>
+     <ul class="compact">
+      <li><strong>Limits:</strong> doesn't account for high GSUB complexity.</li>
+      <li><strong>Time Budget:</strong> estimate brotli and dep graph cost for a font.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>When the user omits a quality flag, <code>AutoPickQuality</code> picks a default quality level as a function of the number of codepoints in the font, calibrated across the Google Fonts library so that fewer than 0.5% of fonts take longer than 15 minutes to segment. In the future, we plan to evolve this into a time-budget estimator that samples Brotli/closure speed and factors in per-merge-group sizes and condition complexity.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 12: PART 2 HEADER - SEGMENTATION & DEPENDENCY GRAPH
+  ===================================================================== -->
+  <section class="slide part" id="part-segmentation">
+   <h1>Part 2: Glyph Segmentation &amp; Dependency Graph</h1>
+   <p>Mapping Unicode codepoints &amp; features to closure-safe glyph patches</p>
+  </section>
+
+  <section class="comment">
+   <p>Now let's move to Part 2: how the segmenter bridges the gap between Unicode codepoints in the client's text and Glyph IDs in the font's outline tables.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 13: THE GLYPH SEGMENTATION PROBLEM
+  ===================================================================== -->
+  <section class="slide" id="segmentation-problem">
+   <h2>The Glyph Segmentation Problem</h2>
+   <div class="columns">
+    <section>
+     <h3>Codepoints vs. Glyphs</h3>
+     <ul class="compact">
+      <li>Conditions match <strong>codepoints &amp; features</strong>; patches hold <strong>Glyph IDs</strong>.</li>
+      <li><code>GSUB</code>, <code>cmap 14</code>, <code>glyf</code>, and <code>COLR</code> substitute glyphs.</li>
+      <li><strong>Ligature <code>f + i → fi</code>:</strong> Requires a 3rd patch for <code>fi</code> under <code>(f AND i)</code>.</li>
+     </ul>
+    </section>
+    <figure>
+     <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 380 210" role="img" aria-label="Ligature f + i -> fi patch condition diagram">
+      <defs>
+       <marker id="arrow-seg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+       </marker>
+      </defs>
+      <rect x="10" y="12" width="150" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="85" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 1: {gid_f}</text>
+      <text x="85" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0066 'f')</text>
+
+      <rect x="220" y="12" width="150" height="65" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="295" y="36" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 2: {gid_i}</text>
+      <text x="295" y="59" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0069 'i')</text>
+
+      <line x1="85" y1="77" x2="165" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-seg)"/>
+      <line x1="295" y1="77" x2="215" y2="125" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-seg)"/>
+
+      <rect x="70" y="130" width="240" height="68" rx="6" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+      <text x="190" y="155" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Patch 3: {gid_fi} (Ligature)</text>
+      <text x="190" y="179" text-anchor="middle" fill="var(--slide-fg)" font-size="13" font-family="monospace">if (U+0066 'f' AND U+0069 'i')</text>
+     </svg>
+    </figure>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Here's the core problem of glyph segmentation: patch activation conditions are evaluated against Unicode codepoints and feature tags, whereas outline patches store Glyph IDs. Because of OpenType layout substitutions like the classic <code>f + i -> fi</code> ligature, placing <code>f</code> and <code>i</code> in separate patches requires a third patch for <code>fi</code> guarded by the conjunctive condition <code>(f AND i)</code>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 14: CORE CONCEPTS & THE CLOSURE REQUIREMENT
+  ===================================================================== -->
+  <section class="slide" id="closure-requirement">
+   <h2>The Closure Requirement</h2>
+   <p>The segmenter ensure the following requirements are satisfied:</p>
+   <h3>Disjoint Patches</h3>
+   <p>Every glyph outside <var>s</var><sub>0</sub> belongs to <strong>exactly one</strong> patch.</p>
+   <h3>Closure Invariant</h3>
+   <p>For any subset of codepoints and layout features, the glyphs in the initial font plus all matching patches must be a <strong>superset of the font subsetter's glyph closure</strong> for that subset.</p>
+  </section>
+
+  <section class="comment">
+   <p>Every segmentation plan must uphold two invariants: first, glyph patches are strictly disjoint so we never duplicate glyph outlines across patches; second, it must satisfy the Closure Requirement—for any combination of codepoints and features, the loaded patches must be a superset of the HarfBuzz subsetter glyph closure for that subset definition.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 15: HIGH-LEVEL SEGMENTING ALGORITHM OVERVIEW
+  ===================================================================== -->
+  <section class="slide" id="segmenting-algorithm-overview">
+   <h2>High-Level Segmenting Algorithm</h2>
+   <ol class="compact">
+    <li><strong>Initialize:</strong> 1 segment per codepoint/feature (pre-grouping rare tail in 4s).</li>
+    <li><strong>Extract Conditions:</strong> Assign each glyph a normalized CNF condition.</li>
+    <li><strong>Initial Patches:</strong> Group glyphs with identical conditions into patches.</li>
+    <li><strong>Initial Font Merging:</strong> Move high-probability &amp; fallback glyphs to <var>s</var><sub>0</sub>.</li>
+    <li><strong>Iterative Merging:</strong> Merge segments/patches to minimize cost &amp; meet <code>min_group_size</code>.</li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p>Implemented in <code>ClosureGlyphSegmenter::CodepointToGlyphSegments</code>. We start with the finest possible segmentation (one segment per codepoint and feature), extract exact glyph activation conditions, group glyphs with identical conditions into initial patches, merge high-probability patches into the initial font, and iteratively merge segments and patches guided by our cost function.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 16: CONDITION ANALYSIS MODES
+  ===================================================================== -->
+  <section class="slide" id="condition-analysis-modes">
+   <h2>Condition Analysis</h2>
+    <section>
+     <h3>Via Dependency Graph</h3>
+     <ul class="compact">
+      <li>Generate Exact CNF for each glyph: (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &and; (<var>s</var><sub>3</sub> &or; <var>s</var><sub>4</sub>).</li>
+      <li><strong>Quality 1 Simplify:</strong> reduced to pure AND/OR.</li>
+     </ul>
+    </section>
+  </section>
+
+  <section class="comment">
+   <p>Originally, we inferred glyph conditions by probing HarfBuzz's subsetter closure. Today, our default approach is <code>DEP_GRAPH_ONLY</code>, which builds an explicit dependency graph directly from the font's tables. That dependency graph is then analyzed to produce the conditions under which each glyph is needed (in terms of segments).</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 17: GLYPH AND UNICODE DEPENDENCY GRAPH - NODES
+  ===================================================================== -->
+  <section class="slide" id="dependency-graph-nodes">
+   <h2>Dependency Graph: Node Types</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 770 180" role="img" aria-label="Dependency graph node hierarchy from Segment to Codepoint/Feature to Glyph">
+     <defs>
+      <marker id="arrow-nodes" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="6" y="66" width="150" height="72" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="81" y="91" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Segment Node</text>
+     <text x="81" y="111" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">codepoints + features</text>
+
+     <line x1="156" y1="88" x2="202" y2="68" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+     <line x1="156" y1="118" x2="202" y2="141" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+
+     <rect x="206" y="32" width="212" height="68" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="312" y="54" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Unicode Codepoint Node</text>
+     <text x="312" y="73" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Unicode decomp/comp &amp; bidi</text>
+     <text x="312" y="90" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• cmap nominal &amp; cmap 14 UVS</text>
+     <path d="M 285 32 C 272 4, 352 4, 339 28" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+
+     <rect x="206" y="112" width="212" height="62" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="312" y="134" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Feature Node</text>
+     <text x="312" y="152" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• Non-default OpenType tags</text>
+     <text x="312" y="167" text-anchor="middle" fill="var(--slide-fg)" font-size="11">(e.g. 'smcp', 'swsh', 'dlig')</text>
+
+     <line x1="418" y1="68" x2="466" y2="91" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+     <line x1="418" y1="144" x2="466" y2="118" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+
+     <rect x="470" y="48" width="228" height="108" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="584" y="72" text-anchor="middle" fill="var(--h3-fg)" font-size="14" font-weight="bold">Glyph Node</text>
+     <text x="584" y="93" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">• GSUB, glyf, CFF, COLR, MATH</text>
+     <path d="M 698 82 C 742 69, 742 134, 698 121" fill="none" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-nodes)"/>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li>Unifies Segment, Unicode , Feature, and Glyph dependencies into one directed graph.</li>
+    <li>Glyph to glyph sourced from harfbuzz dependency graph API.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>The <code>Dependency Graph</code> class unifies four types of nodes into one graph: <code>Segment</code> nodes act as the entry points; they point to <code>Unicode Codepoint</code> nodes and <code>Feature</code> nodes. Codepoint nodes have edges to other codepoints (modeling Unicode canonical decomposition, composition, and bidi mirroring) and to <code>Glyph</code> nodes via <code>cmap</code> and <code>cmap 14</code> UVS subtables. Finally, <code>Glyph</code> nodes have outgoing edges to other glyphs derived from <code>GSUB</code>, <code>COLR</code>, <code>MATH</code>, and <code>glyf</code> composite references.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 18: DEPENDENCY GRAPH EDGES & INITIAL FONT FOLDING
+  ===================================================================== -->
+  <section class="slide" id="dependency-graph-edges">
+   <h2>Edge Types &amp; Initial Font Folding</h2>
+   <div class="columns">
+    <section>
+     <h3>Disjunctive Edges</h3>
+     <ul class="compact">
+      <li><strong><var>u</var> &rarr; <var>v</var>:</strong> <var>u</var> alone requires <var>v</var> (<code>cmap</code>, <code>glyf</code>, <code>COLR</code>, default <code>GSUB</code>).</li>
+     </ul>
+     <h3>Initial Font Folding</h3>
+     <ul class="compact">
+      <li>Nodes in <var>s</var><sub>0</sub> are <code>True</code> and stripped from contexts <var>C</var>.</li>
+      <li>If <code>i</code> &isin; <var>s</var><sub>0</sub>, <code>f → fi (ctx: {i})</code> becomes <code>f → fi</code>!</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Conjunctive Edges</h3>
+     <ul class="compact">
+      <li><strong><var>u</var> &mdash;(<var>C</var>)&rarr; <var>v</var>:</strong> Requires <var>u</var> <strong>AND all of context <var>C</var></strong>:
+       <ul class="compact">
+        <li><strong>Ligature:</strong> <code>f → fi</code> (ctx: {<var>i</var>})</li>
+        <li><strong>UVS:</strong> <code>a → a.alt</code> (ctx: {VS1})</li>
+        <li><strong>Feature:</strong> <code>a → a.sc</code> (ctx: {smcp})</li>
+       </ul>
+      </li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Edges in the dependency graph come in two flavors: disjunctive edges (<var>u</var> &rarr; <var>v</var>, meaning <var>u</var> alone triggers <var>v</var>) and conjunctive edges (<var>u</var> &rarr; <var>v</var> with a context set <var>C</var> of required features, codepoints, or glyphs). Anything already in the initial font is folded out of all context sets immediately.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20A: CONDITION EXTRACTION EXAMPLE - STEP 1 (ENTRY SEGMENTS)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step1">
+   <h2>Condition Extraction: Entry Segments</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 1: entry segments initialized with s_1 and s_2">
+     <defs>
+      <marker id="arrow-s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s1)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li>Initialize each entry <strong>Segment Node</strong> with its own segment condition (<var>s</var><sub>1</sub>, <var>s</var><sub>2</sub>).</li>
+    <li>Propagate conditions forward in topological order from left to right.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Let's step through a simple example of how activation conditions are extracted from the dependency graph. We start by assigning each entry Segment node its own identity condition—here segment <var>s</var><sub>1</sub> gets condition <var>s</var><sub>1</sub> and segment <var>s</var><sub>2</sub> gets condition <var>s</var><sub>2</sub>—and then propagate conditions forward through the graph.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20B: CONDITION EXTRACTION EXAMPLE - STEP 2 (DISJUNCTIVE EDGES)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step2">
+   <h2>Condition Extraction: Disjunctive</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 2: glyphs g_1 and g_2 receive conditions s_1 and s_2">
+     <defs>
+      <marker id="arrow-s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s2)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s2)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s2)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Single Disjunctive Edge:</strong> Passes the parent node's condition directly to the target node.</li>
+    <li><var>g</var><sub>1</sub> receives <var>s</var><sub>1</sub>; <var>g</var><sub>2</sub> receives <var>s</var><sub>2</sub>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Next, we propagate along the single disjunctive edges from the entry segments to <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub>. Because each node has one incoming disjunctive edge, <var>g</var><sub>1</sub> inherits condition <var>s</var><sub>1</sub> and <var>g</var><sub>2</sub> inherits condition <var>s</var><sub>2</sub>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20C: CONDITION EXTRACTION EXAMPLE - STEP 3 (CONJUNCTIVE EDGE)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step3">
+   <h2>Condition Extraction: Conjunctive</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 3: glyph g_3 receives conjunctive condition s_1 AND s_2">
+     <defs>
+      <marker id="arrow-s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s3)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--h3-fg)" font-size="11" font-family="monospace" font-weight="bold">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s3)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∧ s₂</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="1.5" stroke-dasharray="5,3"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: ?</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Conjunctive Edge (<code>AND</code>):</strong> Joins the source node condition with all context node conditions.</li>
+    <li><var>g</var><sub>3</sub> receives <code>And(Cond(g₁), Cond(g₂)) = s₁ &and; s₂</code>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Next, we evaluate the conjunctive edge from <var>g</var><sub>1</sub> to <var>g</var><sub>3</sub>, which carries context <code>{g₂}</code>. We join the source condition (<var>s</var><sub>1</sub>) with the context condition (<var>s</var><sub>2</sub>) using <code>And()</code>, assigning <code>s₁ &and; s₂</code> to <var>g</var><sub>3</sub>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20D: CONDITION EXTRACTION EXAMPLE - STEP 4 (MULTIPLE INCOMING)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-step4">
+   <h2>Condition Extraction: Multiple Parents</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 185" role="img" aria-label="Condition extraction step 4: glyph g_4 receives disjunctive condition s_1 OR s_2">
+     <defs>
+      <marker id="arrow-s4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="102" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="102" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="102" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="190" y1="48" x2="265" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+     <line x1="190" y1="138" x2="265" y2="138" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+
+     <rect x="270" y="15" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="357" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="270" y="105" width="175" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="357" y="130" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="357" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="445" y1="48" x2="555" y2="48" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-s4)"/>
+     <text x="500" y="38" text-anchor="middle" fill="var(--slide-fg)" font-size="11" font-family="monospace">ctx: {g₂}</text>
+
+     <line x1="445" y1="64" x2="555" y2="124" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s4)"/>
+     <line x1="445" y1="138" x2="555" y2="138" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-s4)"/>
+
+     <rect x="560" y="15" width="185" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="652" y="40" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="652" y="64" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁ ∧ s₂</text>
+
+     <rect x="560" y="105" width="185" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="652" y="130" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₄</text>
+     <text x="652" y="154" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Multiple Incoming Edges (<code>OR</code>):</strong> Joins incoming edge conditions via disjunction.</li>
+    <li><var>g</var><sub>4</sub> receives <code>Or(Cond(g₁), Cond(g₂)) = s₁ &or; s₂</code>.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>When a node has multiple incoming edges—like <var>g</var><sub>4</sub> reachable from both <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub>—we join the incoming edge conditions with <code>Or()</code>, yielding <code>s₁ &or; s₂</code>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 20E: CONDITION EXTRACTION EXAMPLE - STEP 5 (CYCLES)
+  ===================================================================== -->
+  <section class="slide" id="condition-extraction-cycles">
+   <h2>Condition Extraction: Cycles</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 190" role="img" aria-label="Condition extraction with a cycle between g_1 and g_2 resolved via SCC fixed-point iteration">
+     <defs>
+      <marker id="arrow-cyc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="15" y="18" width="165" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="97" y="43" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₁</text>
+     <text x="97" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁</text>
+
+     <rect x="15" y="108" width="165" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="97" y="133" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Segment s₂</text>
+     <text x="97" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₂</text>
+
+     <line x1="180" y1="50" x2="258" y2="50" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+     <line x1="180" y1="140" x2="258" y2="140" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+
+     <rect x="245" y="4" width="245" height="180" rx="10" fill="none" stroke="var(--h3-fg)" stroke-width="1.5" stroke-dasharray="6,4"/>
+     <text x="480" y="20" text-anchor="end" fill="var(--h3-fg)" font-size="11" font-weight="bold">SCC (Cycle)</text>
+
+     <rect x="263" y="18" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="350" y="43" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₁</text>
+     <text x="350" y="67" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+
+     <rect x="263" y="108" width="175" height="65" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="350" y="133" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Glyph g₂</text>
+     <text x="350" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace" font-weight="bold">Cond: s₁ ∨ s₂</text>
+
+     <line x1="330" y1="83" x2="330" y2="103" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-cyc)"/>
+     <line x1="370" y1="108" x2="370" y2="88" stroke="var(--h3-fg)" stroke-width="2.5" marker-end="url(#arrow-cyc)"/>
+
+     <line x1="438" y1="140" x2="555" y2="140" stroke="var(--slide-fg)" stroke-width="2" marker-end="url(#arrow-cyc)"/>
+
+     <rect x="560" y="108" width="180" height="65" rx="8" fill="none" stroke="var(--slide-fg)" stroke-width="2"/>
+     <text x="650" y="133" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Glyph g₃</text>
+     <text x="650" y="157" text-anchor="middle" fill="var(--slide-fg)" font-size="12.5" font-family="monospace">Cond: s₁ ∨ s₂</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Tarjan's SCC Algorithm:</strong> Groups cyclic nodes into Strongly Connected Components in topological order.</li>
+    <li><strong>Fixed-Point Iteration:</strong> Repeatedly propagates and <code>Or()</code>s conditions around the cycle until no node's condition changes.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>What if the dependency graph contains a cycle—for example, when contextual <code>GSUB</code> rules substitute <var>g</var><sub>1</sub> and <var>g</var><sub>2</sub> into each other? We run Tarjan's Strongly Connected Components (SCC) algorithm to identify cycles and process SCCs in topological order. Within a multi-node SCC, we iteratively propagate conditions around the cycle using <code>Or()</code> until reaching a fixed point where no node's condition changes, before continuing to downstream nodes like <var>g</var><sub>3</sub>.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 21: ACTIVATION CONDITION NORMALIZATION (CNF)
+  ===================================================================== -->
+  <section class="slide" id="condition-normalization">
+   <h2>CNF Condition Normalization</h2>
+   <p>Canonical <strong>Monotonic CNF</strong>: &nbsp;<strong><var>C</var> = (<var>s</var><sub>1,1</sub> &or; <var>s</var><sub>1,2</sub> &or; &hellip;) &and; (<var>s</var><sub>2,1</sub> &or; <var>s</var><sub>2,2</sub> &or; &hellip;) &and; &hellip;</strong></p>
+   <div class="columns">
+    <section>
+     <h3>Clause Subsumption</h3>
+     <ul class="compact">
+      <li>Drops any clause <var>C</var><sub><var>j</var></sub> where <var>C</var><sub><var>i</var></sub> &sube; <var>C</var><sub><var>j</var></sub>:
+       <br>(<var>s</var><sub>1</sub>) &and; (<var>s</var><sub>1</sub> &or; <var>s</var><sub>2</sub>) &nbsp;&rArr;&nbsp; (<var>s</var><sub>1</sub>)</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Factoring &amp; Simplification</h3>
+     <ul class="compact">
+      <li><strong><code>Or(A, B)</code> Factoring:</strong> Extracts shared clauses <var>I</var> before cross-multiplying:
+       <br>(<var>I</var> &and; <var>A&prime;</var>) &or; (<var>I</var> &and; <var>B&prime;</var>) = <var>I</var> &and; (<var>A&prime;</var> &or; <var>B&prime;</var>)</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>We represent every <code>ActivationCondition</code> in monotonic Conjunctive Normal Form (CNF) and simplify via clause subsumption: if clause <var>A</var> is a subset of clause <var>B</var>, <var>B</var> is redundant and dropped. When computing <code>Or(A, B)</code>, we reduce exponential blowup by factoring out identical clauses shared between <var>A</var> and <var>B</var> in a single linear pass before taking the cross product of the remaining clauses.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 22: PART 3 HEADER - COST-BASED MERGING
+  ===================================================================== -->
+  <section class="slide part" id="part-merging">
+   <h1>Part 3: Cost-Based Merging &amp; Multi-Script Optimization</h1>
+   <p>Minimizing expected bytes transferred across languages</p>
+  </section>
+
+  <section class="comment">
+   <p>Once we have our initial fine-grained patches and their normalized CNF conditions, we enter Part 3: the cost-based merger.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 23: WHY MERGE? THE TRADEOFF SPACE
+  ===================================================================== -->
+  <section class="slide two-panes" id="why-merge">
+   <div>
+    <h2>Why Merge Segments &amp; Patches?</h2>
+    <p>1 segment per codepoint yields thousands of tiny patches.</p>
+    <ul>
+     <li><strong>Per-Patch Overhead (<var>k</var>)</strong> vs.</li>
+     <li><strong>Over-Fetching Unneeded Glyphs</strong></li>
+    </ul>
+   </div>
+   <div>
+    <h3>Pros vs. Cons</h3>
+    <ul class="compact">
+     <li>Fewer Requests</li>
+     <li>Better Brotli</li>
+     <li>Smaller Patch Maps</li>
+     <li><strong>Risk:</strong> Merging rare + common glyphs wastes bandwidth!</li>
+    </ul>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>If we leave one segment per codepoint, the client pays a per-request network overhead on every patch and loses cross-glyph Brotli compression synergy. On the other hand, merging a rare character with a common character like 'e' forces every user to download the rare glyph. We need a quantitative objective function to evaluate candidate merges.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 24: THE SEGMENTATION COST FUNCTION
+  ===================================================================== -->
+  <section class="slide" id="cost-function">
+   <h2>The Segmentation Cost Function</h2>
+   <p>Expected bytes transferred for a random page view:</p>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center"><strong>cost(<var>S</var>) &nbsp;=&nbsp; size(<var>F</var><sub>init</sub>) &nbsp;+&nbsp; &sum;<sub><var>i</var>=1..<var>n</var></sub> <var>P</var>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <ul>
+    <li><strong><var>P</var>(<var>c</var><sub><var>i</var></sub>) &isin; [0, 1]:</strong> Probability condition <var>c</var><sub><var>i</var></sub> is triggered on a random page.</li>
+    <li><strong>size(<var>p</var><sub><var>i</var></sub>):</strong> Brotli-compressed byte size of patch <var>p</var><sub><var>i</var></sub></li>
+    <li><strong><var>k</var> = 200 bytes:</strong> Fixed network overhead per patch request.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Our cost function is the expected number of bytes transferred per page view. Each patch <var>p</var><sub><var>i</var></sub> contributes its activation probability <var>P</var>(<var>c</var><sub><var>i</var></sub>) multiplied by its Brotli-compressed byte size plus a fixed per-request network overhead <var>k</var> (200 bytes by default).</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 25: ASSESSING COST DELTAS
+  ===================================================================== -->
+  <section class="slide" id="cost-deltas">
+   <h2>Assessing Candidate Merges (&Delta;cost)</h2>
+   <div class="columns">
+    <section>
+     <h3>Merge Effects</h3>
+     <ul class="compact">
+      <li>Combines patches.</li>
+      <li>Modifies condition CNF clauses.</li>
+      <li><code>&Delta;cost = cost(after) - cost(before)</code> for all modified</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Greedy Merge Loop</h3>
+     <ul class="compact">
+      <li>Pick merge with <strong>lowest &Delta;cost &lt; 0</strong>.</li>
+      <li>Repeat until no &Delta;cost &lt; 0 remains.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Because total cost is a sum over independent patches, we use an inverted index (<code>TriggeringSegmentToConditions</code>) to find only the patches touched by a candidate merge,
+     subtract their old cost contribution, and add back their new cost contribution. Any merge with &Delta;cost &lt; 0 reduces expected network transfer. Iteratively select and apply the most negative available merge.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 26: SEGMENT MERGING VS PATCH MERGING
+  ===================================================================== -->
+  <section class="slide" id="segment-vs-patch-merging">
+   <h2>Segment Merging vs. Patch Merging</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Segment Merge</h3>
+     <ul class="compact">
+      <li><strong><var>s</var><sub><var>a</var></sub> &cup; <var>s</var><sub><var>b</var></sub> &rarr; <var>s</var><sub><var>a</var><var>b</var></sub>:</strong></li>
+      <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Collapses <code>{f}</code>, <code>{i}</code>, <code>{fi}</code> into one exclusive patch <code>{f, i, fi}</code>!</li>
+      <li>Impacts any conditions the base segments appear in</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Patch Merge</h3>
+     <ul class="compact">
+      <li><strong><var>p</var><sub>1</sub> &cup; <var>p</var><sub>2</sub> &rarr; <var>p</var><sub>12</sub></strong>, <code>Or</code>(<var>c</var><sub>1</sub>, <var>c</var><sub>2</sub>).</li>
+      <li><strong><code>{f}</code> + <code>{i}</code>:</strong> Forms <code>{f, i}</code> under <code>(f OR i)</code>; leaves <code>{fi}</code> untouched!</li>
+      <li>More granular, useful for complex conditions.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>A Segment Merge unions the underlying Unicode segments <var>s</var><sub><var>a</var></sub> and <var>s</var><sub><var>b</var></sub>, which automatically folds conjunctive interaction glyphs like <code>fi</code> into the merged patch. A Patch Merge leaves the input segments alone and directly unions two glyph patches while OR-ing their activation conditions.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 27: INITIAL FONT MERGING
+  ===================================================================== -->
+  <section class="slide" id="initial-font-merging">
+   <h2>Initial Font Merging (<var>s</var><sub>0</sub>)</h2>
+   <div class="columns">
+    <section>
+     <h3>Why Merge into Initial Font?</h3>
+     <ul class="compact">
+      <li>Near-100% probability glyphs waste patch overhead <var>k</var> and a round trip.</li>
+      <li>Moving <var>s</var><sub><var>i</var></sub> into <var>s</var><sub>0</sub> simplifies downstream conjunctive conditions.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Threshold &amp; Fallback</h3>
+     <ul class="compact">
+      <li>Tests segments above probability cutoff (25%–60%).</li>
+      <li>Accepts move if &Delta;cost<sub>init</sub> &lt; &minus;0.8<var>k</var> (&minus;160 B).</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Before running pairwise patch merging, <code>Merger::MoveSegmentsToInitFont</code> evaluates segments above the probability threshold by comparing the initial WOFF2 font growth against eliminated patch transfer costs. If the net savings exceeds 80% of a network request (-160 bytes), the segment moves into the initial font.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 28: PROBABILITY ESTIMATION - UNIGRAMS VS BIGRAMS
+  ===================================================================== -->
+  <section class="slide" id="probability-estimation">
+   <h2>Estimating Condition Probabilities</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Unigrams (Quality 1–2)</h3>
+     <ul class="compact">
+      <li>Single-codepoint <var>P</var>(<var>a</var>); assumes <strong>independence</strong></li>
+      <li><strong>Pros:</strong> Fast O(<var>k</var>) dataset.</li>
+      <li><strong>Cons:</strong> Overestimates unions <var>P</var>(<var>a</var> &cup; <var>b</var>) on correlated code points.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Bigrams (Quality 3–7)</h3>
+     <ul class="compact">
+      <li>Pairwise co-occurrence <var>P</var>(<var>a</var> &cap; <var>b</var>)</li>
+      <li><strong>Captures correlation</strong></li>
+      <li>Computes <strong>Bounds [<var>P</var><sub>min</sub>, <var>P</var><sub>max</sub>]</strong> for <var>k</var> &ge; 3</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Unigram mode uses individual codepoint probabilities and assumes statistical independence—which is fast, but overestimates union probabilities because characters on web pages co-occur. Bigram mode (Q3–Q7) uses pairwise co-occurrence counts <var>P</var>(<var>a</var> &cap; <var>b</var>) to compute rigorous upper and lower probability bounds without assuming independence.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 29: BIGRAM PROBABILITY BOUNDS (DAWSON-SANKOFF & FRECHET)
+  ===================================================================== -->
+  <section class="slide" id="probability-bounds">
+   <h2>Bigram Probability Bounds</h2>
+   <section>
+   <ul class="compact">
+     <li>Utilizes <a href="https://projecteuclid.org/journals/annals-of-mathematical-statistics/volume-39/issue-6/Bounds-for-the-Probability-of-a-Union-with-Applications/10.1214/aoms/1177698049.full">
+     Bounds for the Probability of a Union, with Applications</a></li>
+     <li>For cost function use average of bound</li>
+   </section>
+  </section>
+
+  <section class="comment">
+   <p>For a union of codepoints we use the approach from "Bounds for the Probability of a Union, with Applications" to compute probability bounds using the unigram and bigram probabilities. When computing costs we need to
+     convert the bounds into a single value. We currently use the average of upper and lower based as that seemed to perform best in experiments.
+   </p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 30: MULTI-SCRIPT FONTS & MERGE GROUP ISOLATION
+  ===================================================================== -->
+  <section class="slide" id="multi-script-isolation">
+   <h2>Multi-Script Fonts</h2>
+   <div class="columns">
+    <section>
+     <h3>Challenges</h3>
+     <ul class="compact">
+      <li>No Cross-Script Bigrams.</li>
+      <li><strong>Shared Codepoints:</strong> CJK languages share Han ideographs at different frequencies.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Design Principles</h3>
+     <ul class="compact">
+      <li><strong>Equal Script Weighting:</strong> No global traffic bias.</li>
+      <li><strong>Isolated Merge Groups:</strong> Disjoint scripts merge independently, bounding O(<var>n</var><sup>2</sup>) search.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>When encoding a multi-script font, every supported script is treated with equal importance rather than weighting by global internet traffic. We isolate disjoint scripts into separate Merge Groups, which both prevents cross-script merges and shrinks the quadratic O(<var>n</var><sup>2</sup>) search space.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 31: MULTI-DATASET COST FUNCTION & AGGREGATE PROBABILITY
+  ===================================================================== -->
+  <section class="slide" id="multi-dataset-cost">
+   <h2>Multi-Dataset Cost &amp; <var>P</var><sub>agg</sub> Factoring</h2>
+   <p>Unweighted sum across <var>M</var> frequency data sets in a merge group:</p>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center"><strong>cost(<var>S</var>) &nbsp;=&nbsp; &sum;<sub><var>m</var>=1..<var>M</var></sub> &sum;<sub><var>p</var><sub><var>i</var></sub> &isin; <var>S</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>) &times; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>)</strong></p>
+   <h3>Linearity Optimization</h3>
+   <ul class="compact">
+    <li>size(<var>p</var><sub><var>i</var></sub>) and <var>k</var> are identical across all <var>M</var> datasets:
+     <br><strong>&sum;<sub><var>m</var>=1..<var>M</var></sub> <var>P</var><sub><var>m</var></sub>(<var>c</var><sub><var>i</var></sub>)(size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &nbsp;=&nbsp; (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) &times; <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>)</strong></li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>Inside a multi-script merge group like CJK (<var>M</var> = 4), a patch's compressed size size(<var>p</var><sub><var>i</var></sub>) and network overhead <var>k</var> do not depend on the language dataset. By factoring (size(<var>p</var><sub><var>i</var></sub>) + <var>k</var>) out of the sum, we sum the condition probabilities across the <var>M</var> calculators to get <var>P</var><sub>agg</sub>(<var>c</var><sub><var>i</var></sub>) and multiply by the patch size once.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 33: MINIMUM GROUP SIZE ENFORCEMENT & HEURISTIC MERGING
+  ===================================================================== -->
+  <section class="slide" id="min-group-size-and-heuristic">
+   <h2>Minimum Group Sizes &amp; Heuristic Fallback</h2>
+   <div class="columns">
+    <section>
+     <h3>Minimum Group Size (Privacy)</h3>
+     <ul class="compact">
+      <li>Enforce minimum group size (# of disjunctive codepoints) per condition.</li>
+      <li><strong>Phase A:</strong> Greedily apply &Delta;cost &lt; 0 merges.</li>
+      <li><strong>Phase B:</strong> Accept <strong>least-positive &Delta;cost</strong> merges until &ge; 4.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Heuristic Merger (Fallback)</h3>
+     <ul class="compact">
+      <li>For codepoints without frequency data.</li>
+      <li>Merges adjacent patches in codepoint order up to <code>min_patch_size = 2500</code> B.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>To prevent single-character fingerprinting, our cost merger runs in two phases: Phase A performs all merges with negative &Delta;cost; Phase B allows least-positive &Delta;cost merges for any remaining patches with effective group size below 4. Uncovered codepoints use a fast heuristic merger targeting <code>min_patch_size = 2500</code> bytes.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 34: PART 4 HEADER - KEY OPTIMIZATION TECHNIQUES
+  ===================================================================== -->
+  <section class="slide part" id="part-optimizations">
+   <h1>Part 4: Key Optimization Techniques &amp; Validation</h1>
+   <p>Pruning O(<var>n</var><sup>2</sup>) Brotli evaluations, inert segments, caching &amp; closure verification</p>
+  </section>
+
+  <section class="comment">
+   <p>Now let's examine Part 4: the algorithmic optimizations that make cost-based segmentation fast in practice, followed by how we validate the final segmentation plan.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 35: THE PERFORMANCE BOTTLENECK
+  ===================================================================== -->
+  <section class="slide" id="encoding-bottlenecks">
+   <h2>Bottleneck: O(<var>n</var><sup>2</sup>) Compressions</h2>
+   <p>CJK fonts start with <var>n</var> &gt; 20,000 segments &rarr; O(<var>n</var><sup>2</sup>) candidate pairs.</p>
+   <h3>Four Optimization Pillars</h3>
+   <ol class="compact">
+    <li><strong>Best-Case Pruning</strong></li>
+    <li><strong>Pre-Grouping &amp; Cutoff</strong></li>
+    <li><strong>Inert Segments &amp; Partial Graph</strong></li>
+    <li><strong>Caching &amp; Brotli Tiers</strong></li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p>Evaluating C(<var>n</var>, 2) pairs on a 20,000-codepoint font would naively require hundreds of millions of Brotli compressions. To make segmentation practical across the Google Fonts corpus, we combine four key optimization pillars.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 36: OPTIMIZATION 1 - BEST-CASE PRUNING
+  ===================================================================== -->
+  <section class="slide" id="opt-best-case-pruning">
+   <h2>Opt 1: Best-Case Cost Pruning</h2>
+   <p style="border: 2px solid var(--h3-fg); border-radius: 8px; padding: 0.5em 0.8em; text-align: center">
+   <strong>size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) &nbsp;=&nbsp; max(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; <var>f</var><sub>best</sub> &times; min(size(<var>A</var>), size(<var>B</var>)) &nbsp;+&nbsp; header</strong></p>
+   <div class="columns">
+    <section>
+     <h3>Size Reduction Bound</h3>
+     <ul class="compact">
+      <li><strong>Theoretical (<var>f</var><sub>best</sub> = 0):</strong> 0 extra bytes for smaller patch.</li>
+      <li><strong>Empirical (<var>f</var><sub>best</sub> = 0.5):</strong> <strong>99.8% of pairs</strong> retain &ge; 50% of min(size(<var>A</var>), size(<var>B</var>)).</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Early Rejection</h3>
+     <ul class="compact">
+      <li>Plug size<sub>best</sub>(<var>A</var> &cup; <var>B</var>) into &Delta;cost.</li>
+      <li>If &Delta;cost<sub>best</sub> &ge; 0 (or &ge; best &Delta;cost), <strong>skip Brotli!</strong></li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Before invoking Brotli on a candidate merge of patches <var>A</var> and <var>B</var>, we compute the smallest plausible merged size. Empirically, across real fonts at Brotli 9, 99.8% of pairs retain at least 50% of the smaller patch's compressed size (<code>best_case_size_reduction_fraction = 0.5</code>). If even that best-case size cannot beat our current best &Delta;cost, we skip Brotli entirely.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING (A)
+  ===================================================================== -->
+  <section class="slide" id="opt-cutoff-pregrouping">
+   <h2>Opt 2: Pre-Grouping &amp; Tail Cutoff</h2>
+   <section>
+     <h3>Observation</h3>
+     <ul>
+      <li>Segment's contribution to total cost is proportional to its probability.</li>
+      <li>Therefore, very low probability segments have marginal impact.</li>
+      <li>Don't waste time optimizing these.</li>
+     </ul>
+   </section>
+  </section>
+
+  <section class="comment">
+   <p>Looking at the cost function we can see that segments with very low probability will have marginal impact on the total cost of a segmentation. Therefore we shouldn't waste time trying to optimize these as it will not yield improvements to the overal cost of a segmentation.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 37: OPTIMIZATION 2 - LOW-IMPACT CUTOFF & PRE-GROUPING (B)
+  ===================================================================== -->
+  <section class="slide" id="opt-cutoff-pregrouping">
+   <h2>Opt 2: Pre-Grouping &amp; Tail Cutoff</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Pre-Closure Grouping</h3>
+     <ul class="compact">
+      <li>Sorts segments by descending <var>P</var>(<var>s</var><sub><var>i</var></sub>).</li>
+      <li>Pre-merges tail segments below <code>0.05%–5%</code> into groups of 4.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Optimization Cutoff</h3>
+     <ul class="compact">
+      <li>Check total cost contribution of each segment.</li>
+      <li>Those below <code>0.5%–5%</code> of total cost are not optimized.</li>
+      <li>Only apply min group size requirements</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>We can take advantage of this in two ways: first, <code>PreGroupSegments</code> merges rare segments into chunks of 4 before building the dependency graph; second, segments in the bottom 0.5% to 5% of total cost contribution skip O(<var>n</var><sup>2</sup>) pair evaluation completely.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 38: OPTIMIZATION 3 - INERT SEGMENTS & INCREMENTAL UPDATES
+  ===================================================================== -->
+  <section class="slide" id="opt-inert-incremental">
+   <h2>Opt 3: Inert Segments &amp; Partial Graph</h2>
+   <div class="columns">
+    <section>
+     <h3>Inert Segments</h3>
+     <ul class="compact">
+      <li>No interactions.</li>
+      <li>One patch: if(<var>s</var><sub>i</sub>) then <var>p</var><sub>j</sub></li>
+      <li>Can be batch processed.</li>
+      <li>Plus fast path special case for various operations.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Incremental Updates</h3>
+     <ul class="compact">
+      <li>After applying merges all state is incrementally updated</li>
+      <li>Includes derived activation conditions</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Inert segments only map to exclusive glyphs and have zero multi-segment interactions. Merging two inert segments requires zero condition recomputation, and inert segments can be merged into the initial font in a single batch. When non-inert segments merge, we incrementally update only the effected state.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 39: OPTIMIZATION 4 - CACHING & BROTLI QUALITY TIERS
+  ===================================================================== -->
+  <section class="slide" id="opt-caching-brotli">
+   <h2>Opt 4: Caching &amp; Brotli Quality Tiers</h2>
+   <div class="columns">
+    <section>
+     <h3>Four Caches</h3>
+     <ul class="compact">
+      <li>Glyph set to patch size.</li>
+      <li>Subset def to glyph closure.</li>
+      <li>Segment to probability.</li>
+      <li>Codepoint set to probability.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>Brotli Quality Tiers</h3>
+     <ul class="compact">
+      <li><strong>Q11:</strong>Maximum accuracy, very slow.</li>
+      <li><strong>Q9:</strong>Much faster, but still good accuracy.</li>
+      <li><strong>Q0:</strong> O(1) size estimate via font-wide compression ratio.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>We aggressively cache expensive operations throughout. Most importantly both probability and brotli compressions are cached. For bi-gram probability calculations we also store intermediate state per segment that speeds up
+     the computation of composite condition probabilities. For brotli experimentation has found that quality 9 has a good tradeoff of speed and accuracy. Below that you can get some poor results. When maximum speed is needed
+     we estimate brotli compression by using a compression ratio computed from the input font.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 40: CLOSURE REQUIREMENT VALIDATION
+  ===================================================================== -->
+  <section class="slide" id="closure-validation">
+   <h2>Segmentation Validation</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Incremental State Check</h3>
+     <ul class="compact">
+      <li>Compare incremental state to full recomputation.</li>
+      <li>Ensure they didn't diverge.</li>
+     </ul>
+    </section>
+    <section>
+     <h3>2. Closure &amp; Partition Check</h3>
+     <ul class="compact">
+      <li>Verify patches are disjoint.</li>
+      <li>Use harfbuzz subset closure to validate closure requirement.</li>
+     </ul>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>At the end of segmentation, we run two strict validation checks:
+     Recomputes all glyph conditions from scratch and asserts equivalence with the incremental state;
+     Verify disjoint partitioning and utilize HarfBuzz closure to prove that the segmentation satisfies the closure requirement.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 41: PART 5 HEADER - THE IFT COMPILER
+  ===================================================================== -->
+  <section class="slide part" id="part-compiler">
+   <h1>Part 5: The IFT Compiler</h1>
+   <p>Table-keyed patch graphs, recursive compilation &amp; OpenType table handling</p>
+  </section>
+
+  <section class="comment">
+   <p>Finally, let's dive into Part 5: the IFT Compiler (<code>ift/encoder/compiler.cc</code>), which takes the <code>SegmentationPlan</code> and compiles the actual WOFF2 initial font and patch files.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 42: COMPILER OVERVIEW & TABLE-KEYED PATCH GRAPH
+  ===================================================================== -->
+  <section class="slide" id="compiler-overview">
+   <h2>The Table-Keyed Patch Graph (DAG)</h2>
+   <figure>
+    <svg style="text-shadow: none; width: 100%; height: auto" viewBox="0 0 760 160" role="img" aria-label="Table-keyed patch graph DAG showing nodes A, A+B, A+C, and A+B+C">
+     <defs>
+      <marker id="arrow-dag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+       <path d="M 0 1 L 10 5 L 0 9 z" fill="context-stroke" />
+      </marker>
+     </defs>
+     <rect x="8" y="50" width="140" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="78" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Init Node: {A}</text>
+     <text x="78" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Initial IFT Font</text>
+
+     <rect x="285" y="6" width="160" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="365" y="31" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Node: {A + B}</text>
+     <text x="365" y="49" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Extended with seg B</text>
+
+     <rect x="285" y="98" width="160" height="55" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2"/>
+     <text x="365" y="123" text-anchor="middle" fill="var(--slide-fg)" font-size="13.5" font-weight="bold">Node: {A + C}</text>
+     <text x="365" y="141" text-anchor="middle" fill="var(--slide-fg)" font-size="11">Extended with seg C</text>
+
+     <rect x="580" y="50" width="172" height="60" rx="8" fill="none" stroke="var(--h3-fg)" stroke-width="2.5"/>
+     <text x="666" y="76" text-anchor="middle" fill="var(--h3-fg)" font-size="13.5" font-weight="bold">Node: {A + B + C}</text>
+     <text x="666" y="96" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5">Full Non-Outline Font</text>
+
+     <line x1="148" y1="66" x2="280" y2="34" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
+     <text x="210" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
+
+     <line x1="148" y1="94" x2="280" y2="125" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
+     <text x="210" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
+
+     <line x1="445" y1="34" x2="575" y2="66" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
+     <text x="515" y="40" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +C</text>
+
+     <line x1="445" y1="125" x2="575" y2="94" stroke="var(--h3-fg)" stroke-width="2" marker-end="url(#arrow-dag)"/>
+     <text x="515" y="124" text-anchor="middle" fill="var(--h3-fg)" font-size="11.5" font-family="monospace">patch +B</text>
+
+     <line x1="148" y1="80" x2="575" y2="80" stroke="var(--slide-fg)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-dag)"/>
+     <text x="365" y="75" text-anchor="middle" fill="var(--slide-fg)" font-size="11.5" font-weight="bold">Jump Ahead 2: +B+C (1 RT via Prefetch List)</text>
+    </svg>
+   </figure>
+   <ul class="compact">
+    <li><strong>Nodes:</strong> Non-outline table subset states.</li>
+    <li><strong>Edges:</strong> Brotli shared-dictionary binary diffs. Transitioning <var>A</var> &rarr; <var>A</var> &cup; &Delta;.</li>
+   </ul>
+  </section>
+
+  <section class="comment">
+   <p>In the compiler, table-keyed patches form a Directed Acyclic Graph. Every node in the DAG represents an extended state of the font's non-outline tables (e.g., initial font <var>A</var>, <var>A</var>+<var>B</var>, <var>A</var>+<var>C</var>, <var>A</var>+<var>B</var>+<var>C</var>), and every edge represents extending the font with one or more non-outline segments (typically one segment per script plus one for optional layout features).</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 43: TABLE-KEYED PATCH GRAPH SHAPE PARAMETERS
+  ===================================================================== -->
+  <section class="slide" id="patch-graph-parameters">
+   <h2>Table-Keyed Graph Shape Parameters</h2>
+   <div class="columns">
+    <section>
+     <h3>1. Jump Ahead</h3>
+     <p><code>jump_ahead</code>: adds multi-segment outgoing edges in 1 round trip.</p>
+     <h3>2. Prefetch Lists</h3>
+     <p><code>use_prefetch_lists</code>: Jumps use <strong>Prefetch List</strong> of 1-seg patches.</p>
+    </section>
+    <section>
+     <h3>3. Max Depth</h3>
+     <p><code>max_depth</code>: caps DAG depth <var>D</var>. Maximum number of round trips to reach full coverage.</p>
+     <h3>4. All-Segment Edges</h3>
+     <p><code>include_all_segment_patches</code>: optional "add all remaining" edge at every node.</p>
+    </section>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>If a font has many scripts, a full hypercube of table-keyed patches grows as <var>S</var> &middot; 2<sup><var>S</var>&minus;1</sup>. We shape this graph with four parameters in <code>SegmentationPlan</code>: <code>jump_ahead = 2</code> lets clients add two script segments in a single round trip; <code>use_prefetch_lists = true</code> encodes multi-segment edges by listing single-segment patches in the Format 2 prefetch list; and <code>max_depth</code> caps the depth of the graph so total table-keyed patches stay under 2,048.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 44: RECURSIVE COMPILATION ALGORITHM
+  ===================================================================== -->
+  <section class="slide" id="compiler-algorithm">
+   <h2>Recursive Compilation (<code>Compile</code>)</h2>
+   <ol class="compact">
+        <li><strong>Outgoing Edges:</strong> walk graph generate table keyed patches for each edge.</li>
+    <li><strong>Node Font:</strong> Subset original font to node state and insert <code>IFT </code>/<code>IFTX</code>.</li>
+    <li><strong>Glyph Patches:</strong> Slice &amp; Brotli-compress outlines per unique design space configuration.</li>
+   </ol>
+  </section>
+
+  <section class="comment">
+   <p>Here is the 5-step recursive algorithm in <code>Compiler::Compile</code>. At each node, we generate (or look up in cache) the glyph-keyed patch set for the node's variable design space, enumerate outgoing table-keyed edges, compile Format 2 Patch Map tables using <code>EntryGraph::Optimize()</code>, subset the font to the current node, and recursively compile target nodes to generate Brotli shared-dictionary table-keyed patches.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 45: OPENTYPE SPECIAL HANDLING & INTEGRATION TESTING
+  ===================================================================== -->
+  <section class="slide" id="compiler-special-handling">
+   <h2>OpenType Special Handling &amp; Testing</h2>
+    <section>
+     <h3>OpenType Requirements</h3>
+     <ul class="compact">
+      <li><strong>Retain GIDs:</strong> Sizes <code>maxp</code> for all patches.</li>
+      <li><strong>Long <code>loca</code>:</strong> force 32-bit offsets if source font has them.</li>
+      <li><strong>2-Step <code>gvar</code>:</strong> Special handling preserves shared tuples.</li>
+      <li><strong><code>CFF</code></strong> Desubroutinizes &amp; encode char string offsets in IFT</li>
+      <li><strong><code>WOFF2:</code></strong>Round trip and no glyf transforms in WOFF2.</li>
+     </ul>
+    </section>
+  </section>
+
+  <section class="comment">
+   <p>Making table-keyed subsetting and glyph-keyed outline patching work together requires careful OpenType engineering: retaining GIDs, forcing long <code>loca</code> offsets when needed, two-step <code>gvar</code> subsetting so shared tuples stay synchronized, desubroutinizing <code>CFF</code>/<code>CFF2</code> charstrings, and round-tripping the initial font through WOFF2 before diffing.</p>
+  </section>
+
+  <!-- ====================================================================
+       SLIDE 46: CONCLUSION & RESOURCES
+  ===================================================================== -->
+  <section class="slide final" id="conclusion">
+   <div>
+    <h2>Thank You &amp; Questions!</h2>
+   </div>
+   <div>
+    <h2>Resources</h2>
+    <ul class="with-icons">
+     <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
+      <a href="https://github.com/w3c/ift-encoder">github.com/w3c/ift-encoder</a></li>
+     <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
+      <a href="https://github.com/w3c/ift-encoder-data">github.com/w3c/ift-encoder-data</a></li>
+     <li><svg aria-label="GitHub"><use xlink:href="Templates/icons.svg#github"></use></svg>
+      <a href="https://w3c.github.io/IFT/Overview.html">w3c.github.io/IFT/Overview.html</a></li>
+    </ul>
+   </div>
+  </section>
+
+  <section class="comment">
+   <p>Thank you! Here are links to the <code>w3c/ift-encoder</code> and <code>w3c/ift-encoder-data</code> repositories as well as the W3C IFT specification. I'd love to open the floor to questions and discussion.</p>
+  </section>
+
+ </body>
+</html>
